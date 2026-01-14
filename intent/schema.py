@@ -7,7 +7,7 @@ All user inputs must conform to these schemas with no free-form text fields.
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class TaskType(str, Enum):
@@ -119,8 +119,7 @@ class IntentSchema(BaseModel):
         """Get dataset path."""
         return str(self.dataset["path"]).strip()
 
-    class Config:
-        """Pydantic configuration."""
-
-        frozen = True  # Make intent immutable after validation
-        extra = "forbid"  # Reject extra fields
+    model_config = ConfigDict(
+        frozen=True,  # Make intent immutable after validation
+        extra="forbid",  # Reject extra fields
+    )
