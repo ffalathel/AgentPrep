@@ -33,6 +33,7 @@ class ColumnMetadata:
 
     name: str
     semantic_type: str
+    missing_count: int
     missing_percentage: float
     unique_count: int
     pandas_dtype: str
@@ -118,6 +119,7 @@ def infer_column_metadata(df: pd.DataFrame, column_name: str) -> ColumnMetadata:
     return ColumnMetadata(
         name=column_name,
         semantic_type=semantic_type,
+        missing_count=int(missing_count),
         missing_percentage=round(missing_percentage, 4),
         unique_count=unique_count,
         pandas_dtype=pandas_dtype,

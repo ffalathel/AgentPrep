@@ -15,6 +15,7 @@ from orchestrator import PipelineOrchestrator
 # Exit codes
 EXIT_SUCCESS = 0
 EXIT_INVALID_INTENT = 1
+EXIT_POLICY_VIOLATION = 2  # Reserved for Level 5 policy violations
 EXIT_RUNTIME_ERROR = 3
 
 

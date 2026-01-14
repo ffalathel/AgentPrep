@@ -1,0 +1,132 @@
+{
+  "dataset_summary": {
+    "row_count": 2,
+    "column_count": 3,
+    "target_column": "label",
+    "normalized_target_column": "label"
+  },
+  "intent": {
+    "dataset_path": "/private/var/folders/r8/vzfrsfp54fj3_2xpqk5bh0tw0000gn/T/pytest-of-fahdahalathel/pytest-11/test_cli_run_with_valid_config0/sample_data.csv",
+    "task_type": "classification",
+    "target_column": "label",
+    "model_family": "tree",
+    "outlier_policy": "preserve",
+    "allow_column_dropping": false,
+    "interpretability_priority": "high",
+    "max_features": 100,
+    "max_interactions": 50,
+    "max_cardinality": 10000
+  },
+  "schema_metadata": {
+    "total_rows": 2,
+    "total_columns": 3,
+    "columns": {
+      "feature1": {
+        "name": "feature1",
+        "semantic_type": "numeric",
+        "missing_count": 0,
+        "missing_percentage": 0.0,
+        "unique_count": 2,
+        "pandas_dtype": "int64",
+        "total_count": 2
+      },
+      "feature2": {
+        "name": "feature2",
+        "semantic_type": "numeric",
+        "missing_count": 0,
+        "missing_percentage": 0.0,
+        "unique_count": 2,
+        "pandas_dtype": "float64",
+        "total_count": 2
+      },
+      "label": {
+        "name": "label",
+        "semantic_type": "numeric",
+        "missing_count": 0,
+        "missing_percentage": 0.0,
+        "unique_count": 2,
+        "pandas_dtype": "int64",
+        "total_count": 2
+      }
+    }
+  },
+  "quality_profile": {
+    "total_rows": 2,
+    "total_columns": 3,
+    "columns": {
+      "feature1": {
+        "column_name": "feature1",
+        "missing_count": 0,
+        "missing_percentage": 0.0,
+        "unique_count": 2,
+        "is_constant": false,
+        "is_near_constant": false,
+        "numeric_stats": {
+          "min": 1.0,
+          "max": 2.0,
+          "mean": 1.5,
+          "median": 1.5,
+          "std": 0.7071067811865476,
+          "q25": 1.25,
+          "q75": 1.75,
+          "iqr": 0.5,
+          "outlier_count_lower": 0,
+          "outlier_count_upper": 0,
+          "outlier_count_total": 0
+        }
+      },
+      "feature2": {
+        "column_name": "feature2",
+        "missing_count": 0,
+        "missing_percentage": 0.0,
+        "unique_count": 2,
+        "is_constant": false,
+        "is_near_constant": false,
+        "numeric_stats": {
+          "min": 1.100000023841858,
+          "max": 2.200000047683716,
+          "mean": 1.6500000953674316,
+          "median": 1.6500000953674316,
+          "std": 0.7778174877166748,
+          "q25": 1.3750000298023224,
+          "q75": 1.9250000417232513,
+          "iqr": 0.550000011920929,
+          "outlier_count_lower": 0,
+          "outlier_count_upper": 0,
+          "outlier_count_total": 0
+        }
+      },
+      "label": {
+        "column_name": "label",
+        "missing_count": 0,
+        "missing_percentage": 0.0,
+        "unique_count": 2,
+        "is_constant": false,
+        "is_near_constant": false,
+        "numeric_stats": {
+          "min": 0.0,
+          "max": 1.0,
+          "mean": 0.5,
+          "median": 0.5,
+          "std": 0.7071067811865476,
+          "q25": 0.25,
+          "q75": 0.75,
+          "iqr": 0.5,
+          "outlier_count_lower": 0,
+          "outlier_count_upper": 0,
+          "outlier_count_total": 0
+        }
+      }
+    }
+  },
+  "quality_actions": {
+    "proposed_count": 0,
+    "applied_count": 0,
+    "rejected_count": 0,
+    "proposed_actions": [],
+    "applied_actions": [],
+    "rejected_actions": []
+  },
+  "version": "1.0.0",
+  "timestamp": "2026-01-14T17:55:10.774102Z"
+}

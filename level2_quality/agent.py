@@ -71,8 +71,8 @@ class DataQualityAgent:
                 "missing_percentage": col_profile.missing_percentage,
                 "missing_count": col_profile.missing_count,
                 "unique_count": col_profile.unique_count,
-                "is_constant": col_profile.is_constant,
-                "is_near_constant": col_profile.is_near_constant,
+                "is_constant": bool(col_profile.is_constant),  # Convert numpy bool to Python bool
+                "is_near_constant": bool(col_profile.is_near_constant),  # Convert numpy bool to Python bool
             }
 
             # Add numeric stats if available

@@ -144,9 +144,9 @@ def profile_column(df: pd.DataFrame, column_name: str) -> ColumnQualityProfile:
     else:
         is_near_constant = False
 
-    # Compute numeric stats if column is numeric
+    # Compute numeric stats if column is numeric (but not boolean)
     numeric_stats = None
-    if pd.api.types.is_numeric_dtype(series):
+    if pd.api.types.is_numeric_dtype(series) and series.dtype != "bool" and series.dtype.name != "bool":
         numeric_stats = compute_numeric_stats(series)
 
     return ColumnQualityProfile(
