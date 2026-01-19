@@ -234,14 +234,6 @@ AgentPrep/
 
 ## Development
 
-### Running Tests
-
-Tests are located in the `tests/` directory (excluded from git). To run tests:
-
-```bash
-pytest
-```
-
 ### Code Structure
 
 - **Modular Design**: Each level is self-contained with clear interfaces
