@@ -248,10 +248,6 @@ AgentPrep/
 3. Update documentation as needed
 4. Ensure all tests pass before submitting
 
-## License
-
-[Add your license here]
-
 ## Support
 
 For issues, questions, or contributions, please [open an issue](link-to-issues) or [create a pull request](link-to-prs).
