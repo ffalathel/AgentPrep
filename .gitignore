@@ -36,6 +36,7 @@ ENV/
 
 # Testing
 tests/
+test_output/
 .pytest_cache/
 .coverage
 htmlcov/
@@ -43,6 +44,7 @@ htmlcov/
 .hypothesis/
 pytest.ini
 requirements-test.txt
+*.cover
 
 # Demo files
 demo_*.csv

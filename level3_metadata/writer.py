@@ -9,13 +9,14 @@ All writes are:
 """
 
 import json
-import logging
 from pathlib import Path
 from typing import Optional
 
+from utils import get_logger
+
 from .metadata_schema import PipelineMetadata
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MetadataWriter:

@@ -4,15 +4,15 @@ This module normalizes column names and types, ensuring the target column
 is protected and intent constraints are satisfied.
 """
 
-import logging
 import re
 from typing import Optional
 
 import pandas as pd
 
 from intent.schema import IntentSchema
+from utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class NormalizationError(Exception):

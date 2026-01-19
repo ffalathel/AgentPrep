@@ -4,7 +4,6 @@ This module defines the PipelineOrchestrator class which accepts validated
 intent and orchestrates the preprocessing pipeline across all levels.
 """
 
-import logging
 from pathlib import Path
 from typing import Optional
 
@@ -19,8 +18,12 @@ from level2_quality.executor import ActionExecutor, ExecutionError
 from level2_quality.profiler import DatasetQualityProfile, profile_dataset
 from level3_metadata.builder import MetadataBuilder
 from level3_metadata.writer import MetadataWriter
+from level4_feature.agent import FeatureAgentError, FeatureEngineeringAgent
+from level4_feature.generator import FeatureGenerationError, FeatureGenerator
+from level4_feature.validator import FeatureValidator, FeatureValidationError
+from utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class PipelineOrchestrator:
@@ -34,15 +37,22 @@ class PipelineOrchestrator:
         output_path: Optional path for pipeline outputs
     """
 
-    def __init__(self, intent: IntentSchema, output_path: Optional[Path] = None):
+    def __init__(
+        self,
+        intent: IntentSchema,
+        output_path: Optional[Path] = None,
+        llm_client: Optional[object] = None,
+    ):
         """Initialize the orchestrator with validated intent.
 
         Args:
             intent: Validated IntentSchema instance (read-only)
             output_path: Optional path for pipeline outputs
+            llm_client: Optional LLM client for agents (if None, agents return empty proposals)
         """
         self.intent = intent
         self.output_path = Path(output_path) if output_path else None
+        self.llm_client = llm_client
 
         # Level 1 results (populated after Level 1 execution)
         self.raw_dataframe: Optional[pd.DataFrame] = None
@@ -59,6 +69,12 @@ class PipelineOrchestrator:
 
         # Level 3 results (populated after Level 3 execution)
         self.metadata_path: Optional[Path] = None
+
+        # Level 4 results (populated after Level 4 execution)
+        self.feature_dataframe: Optional[pd.DataFrame] = None
+        self.validated_features: Optional[list] = None
+        self.rejected_features: Optional[list] = None
+        self.feature_provenance: Optional[list] = None
 
         logger.info("PipelineOrchestrator initialized")
         logger.debug(f"Intent: task={intent.task.type}, model={intent.model.family}")
@@ -138,7 +154,7 @@ class PipelineOrchestrator:
 
         # Step 2: Request action proposals from LLM
         logger.info("Step 2: Requesting action proposals from LLM...")
-        agent = DataQualityAgent()  # LLM client would be passed here in production
+        agent = DataQualityAgent(llm_client=self.llm_client)
         try:
             proposed_actions = agent.propose_actions(
                 self.quality_profile,
@@ -231,6 +247,95 @@ class PipelineOrchestrator:
 
         logger.info("Level 3 completed")
 
+    def _run_level4_features(self) -> None:
+        """Execute Level 4: Feature Engineering Agent.
+
+        This level:
+        - Requests feature proposals from LLM
+        - Validates proposals for safety and compliance
+        - Generates features deterministically
+        - Tracks feature provenance
+
+        Raises:
+            FeatureAgentError: If LLM agent fails
+            FeatureValidationError: If validation fails critically
+            FeatureGenerationError: If feature generation fails
+        """
+        logger.info("=" * 60)
+        logger.info("Level 4: Feature Engineering Agent")
+        logger.info("=" * 60)
+
+        if (
+            self.cleaned_dataframe is None
+            or self.schema_metadata is None
+            or self.quality_profile is None
+            or self.normalized_target_column is None
+        ):
+            raise RuntimeError("Level 1, 2, and 3 must complete before Level 4")
+
+        # Step 1: Request feature proposals from LLM
+        logger.info("Step 1: Requesting feature proposals from LLM...")
+        agent = FeatureEngineeringAgent(llm_client=self.llm_client)
+        try:
+            proposed_features = agent.propose_features(
+                self.schema_metadata,
+                self.quality_profile,
+                self.intent,
+            )
+            logger.info(
+                f"✓ LLM proposed {len(proposed_features.get('features', []))} features"
+            )
+        except FeatureAgentError as e:
+            logger.warning(f"LLM agent unavailable or returned invalid output: {e}")
+            logger.info("Continuing without LLM proposals (empty features)")
+            proposed_features = {"features": []}
+
+        # Step 2: Validate proposals (critical safety layer)
+        logger.info("Step 2: Validating feature proposals...")
+        validator = FeatureValidator(
+            self.schema_metadata,
+            self.intent,
+            self.normalized_target_column,
+        )
+        try:
+            validated, rejected = validator.validate_proposals(
+                proposed_features.get("features", [])
+            )
+            self.validated_features = validated
+            self.rejected_features = rejected
+
+            validated_count = len(validated)
+            rejected_count = len(rejected)
+            logger.info(
+                f"✓ Feature validation: {validated_count} validated, {rejected_count} rejected"
+            )
+
+            if rejected_count > 0:
+                logger.debug("Rejected features:")
+                for r in rejected:
+                    logger.debug(f"  - {r.name}: {r.reason}")
+
+        except FeatureValidationError as e:
+            logger.error(f"✗ Feature validation failed: {e}")
+            raise
+
+        # Step 3: Generate features deterministically
+        logger.info("Step 3: Generating features...")
+        generator = FeatureGenerator(self.cleaned_dataframe)
+        try:
+            self.feature_dataframe = generator.generate_features(validated)
+            self.feature_provenance = generator.provenance
+
+            logger.info(
+                f"✓ Feature generation complete: {len(self.feature_dataframe.columns)} total columns "
+                f"({len(self.feature_provenance)} new features)"
+            )
+        except FeatureGenerationError as e:
+            logger.error(f"✗ Feature generation failed: {e}")
+            raise
+
+        logger.info("Level 4 completed successfully")
+
     def run(self) -> int:
         """Run the preprocessing pipeline.
 
@@ -261,8 +366,11 @@ class PipelineOrchestrator:
             # Level 3: Metadata & Profiling Persistence
             self._run_level3_metadata()
 
-            # Prepare for Level 4 (future)
-            logger.info("Level 3 outputs prepared for Level 4")
+            # Level 4: Feature Engineering Agent
+            self._run_level4_features()
+
+            # Prepare for Level 5 (future)
+            logger.info("Level 4 outputs prepared for Level 5")
 
             if self.output_path:
                 logger.info(f"Output will be written to: {self.output_path}")
@@ -278,6 +386,9 @@ class PipelineOrchestrator:
             return 1
         except (AgentError, ExecutionError) as e:
             logger.error(f"Pipeline failed at Level 2: {e}")
+            return 1
+        except (FeatureAgentError, FeatureValidationError, FeatureGenerationError) as e:
+            logger.error(f"Pipeline failed at Level 4: {e}")
             return 1
         except Exception as e:
             logger.exception(f"Unexpected error during pipeline execution: {e}")

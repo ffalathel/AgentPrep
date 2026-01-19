@@ -11,14 +11,14 @@ Safety boundaries:
 """
 
 import json
-import logging
 from typing import Any, Optional
 
 from intent.schema import IntentSchema
 from level1_ingestion.schema_inferencer import SchemaMetadata
 from level2_quality.profiler import DatasetQualityProfile
+from utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AgentError(Exception):

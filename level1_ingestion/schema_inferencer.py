@@ -5,13 +5,14 @@ including semantic types, missing value statistics, and data types.
 All outputs are machine-readable structured objects.
 """
 
-import logging
 from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
 
-logger = logging.getLogger(__name__)
+from utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class SemanticType:

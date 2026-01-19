@@ -5,12 +5,13 @@ This module handles loading datasets from disk in supported formats
 without modifying the data.
 """
 
-import logging
 from pathlib import Path
 
 import pandas as pd
 
-logger = logging.getLogger(__name__)
+from utils import get_logger
+
+logger = get_logger(__name__)
 
 
 class DatasetLoadError(Exception):

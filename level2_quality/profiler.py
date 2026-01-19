@@ -5,14 +5,15 @@ All profiling is deterministic - no LLM involvement.
 Output is machine-readable structured data only.
 """
 
-import logging
 from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
-logger = logging.getLogger(__name__)
+from utils import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass

@@ -6,13 +6,13 @@ structured metadata object for persistence.
 This is a pure aggregation layer with no I/O operations.
 """
 
-import logging
 from typing import Optional
 
 from intent.schema import IntentSchema
 from level1_ingestion.schema_inferencer import SchemaMetadata
 from level2_quality.executor import AppliedAction
 from level2_quality.profiler import DatasetQualityProfile
+from utils import get_logger
 
 from .metadata_schema import (
     ActionRecord,
@@ -24,7 +24,7 @@ from .metadata_schema import (
     serialize_schema_metadata,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MetadataBuilder:

@@ -10,7 +10,6 @@ Safety boundaries:
 - Logs all rejected actions with reasons
 """
 
-import logging
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -18,10 +17,11 @@ import numpy as np
 import pandas as pd
 
 from intent.schema import IntentSchema, OutlierPolicy
+from utils import get_logger
 from level1_ingestion.schema_inferencer import SchemaMetadata
 from level2_quality.agent import AgentError
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ExecutionError(Exception):
