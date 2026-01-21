@@ -11,6 +11,7 @@ from typing import Union
 import yaml
 
 from intent.schema import IntentSchema
+from utils import PathValidationError, validate_path_safe
 
 
 class IntentValidationError(Exception):
@@ -30,18 +31,17 @@ def load_config_file(config_path: Union[str, pathlib.Path]) -> dict:
 
     Raises:
         IntentValidationError: If file cannot be loaded or parsed
+        PathValidationError: If path contains directory traversal or security issues
     """
-    config_path = pathlib.Path(config_path)
-
-    if not config_path.exists():
-        raise IntentValidationError(
-            f"Configuration file not found: {config_path.absolute()}"
+    # Validate path for security (prevents directory traversal)
+    try:
+        config_path = validate_path_safe(
+            config_path, must_exist=True, must_be_file=True
         )
-
-    if not config_path.is_file():
-        raise IntentValidationError(
-            f"Configuration path is not a file: {config_path.absolute()}"
-        )
+    except PathValidationError as e:
+        raise IntentValidationError(f"Invalid configuration path: {e}") from e
+    except FileNotFoundError as e:
+        raise IntentValidationError(f"Configuration file not found: {config_path}") from e
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:
@@ -54,13 +54,17 @@ def load_config_file(config_path: Union[str, pathlib.Path]) -> dict:
                     f"Unsupported file format: {config_path.suffix}. "
                     "Supported formats: .yaml, .yml, .json"
                 )
+    except (OSError, IOError) as e:
+        raise IntentValidationError(f"Failed to read configuration file {config_path}: I/O error: {e}") from e
     except yaml.YAMLError as e:
-        raise IntentValidationError(f"Invalid YAML syntax: {e}") from e
+        raise IntentValidationError(f"Invalid YAML syntax in {config_path}: {e}") from e
     except json.JSONDecodeError as e:
-        raise IntentValidationError(f"Invalid JSON syntax: {e}") from e
+        raise IntentValidationError(f"Invalid JSON syntax in {config_path}: {e}") from e
+    except UnicodeDecodeError as e:
+        raise IntentValidationError(f"Failed to decode configuration file {config_path}: Encoding error: {e}") from e
     except Exception as e:
         raise IntentValidationError(
-            f"Failed to read configuration file: {e}"
+            f"Unexpected error reading configuration file {config_path}: {e}"
         ) from e
 
     if config is None:

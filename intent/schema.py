@@ -91,6 +91,47 @@ class ConstraintsConfig(BaseModel):
     )
 
 
+class DataQualityConfig(BaseModel):
+    """Data quality detection configuration."""
+
+    distribution_shift_threshold: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="KS statistic threshold for distribution shift detection",
+    )
+    class_imbalance_severe_threshold: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Ratio threshold for severe class imbalance",
+    )
+    class_imbalance_moderate_threshold: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Ratio threshold for moderate class imbalance",
+    )
+    multicollinearity_threshold: float = Field(
+        default=0.9,
+        ge=0.0,
+        le=1.0,
+        description="Correlation threshold for multicollinearity detection",
+    )
+    protected_attribute_patterns: list[str] = Field(
+        default_factory=list,
+        description="Custom patterns for protected attribute detection",
+    )
+    warn_on_quality_issues: bool = Field(
+        default=True,
+        description="Whether to warn (vs block) on data quality issues",
+    )
+    auto_remediate: bool = Field(
+        default=True,
+        description="Whether to automatically remediate data quality issues when possible",
+    )
+
+
 class IntentSchema(BaseModel):
     """Complete intent schema - immutable policy contract.
 
@@ -103,6 +144,10 @@ class IntentSchema(BaseModel):
     model: ModelConfig = Field(..., description="Model configuration")
     preferences: PreferencesConfig = Field(..., description="User preferences")
     constraints: ConstraintsConfig = Field(..., description="Processing constraints")
+    data_quality: DataQualityConfig = Field(
+        default_factory=DataQualityConfig,
+        description="Data quality detection configuration",
+    )
 
     @field_validator("dataset")
     @classmethod
