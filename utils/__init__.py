@@ -21,9 +21,20 @@ from .file_helpers import (
     get_file_extension,
     is_supported_config_format,
     is_supported_dataset_format,
+    PathValidationError,
+    validate_output_path,
+    validate_path_safe,
 )
 from .llm_client import get_llm_client
 from .logging import get_logger, setup_logging
+from .prompt_sanitizer import (
+    PromptSanitizationError,
+    sanitize_column_name,
+    sanitize_json_for_prompt,
+    sanitize_prompt_variable,
+    sanitize_string_for_prompt,
+)
+from .rate_limiter import RateLimitError, RateLimiter, get_rate_limiter
 
 __all__ = [
     "APP_NAME",
@@ -43,5 +54,16 @@ __all__ = [
     "get_logger",
     "is_supported_config_format",
     "is_supported_dataset_format",
+    "PathValidationError",
+    "PromptSanitizationError",
+    "RateLimitError",
+    "RateLimiter",
+    "get_rate_limiter",
+    "sanitize_column_name",
+    "sanitize_json_for_prompt",
+    "sanitize_prompt_variable",
+    "sanitize_string_for_prompt",
     "setup_logging",
+    "validate_output_path",
+    "validate_path_safe",
 ]
