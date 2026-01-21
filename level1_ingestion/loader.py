@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from utils import get_logger
+from utils import PathValidationError, get_logger, validate_path_safe
 
 logger = get_logger(__name__)
 
@@ -34,15 +34,17 @@ def load_dataset(file_path: str | Path) -> pd.DataFrame:
 
     Raises:
         DatasetLoadError: If file doesn't exist, format is unsupported, or loading fails
+        PathValidationError: If path contains directory traversal or security issues
     """
-    file_path = Path(file_path)
-
-    # Validate file exists
-    if not file_path.exists():
-        raise DatasetLoadError(f"Dataset file not found: {file_path.absolute()}")
-
-    if not file_path.is_file():
-        raise DatasetLoadError(f"Dataset path is not a file: {file_path.absolute()}")
+    # Validate path for security (prevents directory traversal)
+    try:
+        file_path = validate_path_safe(
+            file_path, must_exist=True, must_be_file=True
+        )
+    except PathValidationError as e:
+        raise DatasetLoadError(f"Invalid dataset path: {e}") from e
+    except FileNotFoundError as e:
+        raise DatasetLoadError(f"Dataset file not found: {file_path}") from e
 
     # Determine format from extension
     suffix = file_path.suffix.lower()
@@ -55,6 +57,7 @@ def load_dataset(file_path: str | Path) -> pd.DataFrame:
     logger.debug(f"File format: {suffix}")
 
     try:
+        # Use resolved path for actual file operations
         if suffix == ".csv":
             df = pd.read_csv(file_path)
         elif suffix == ".parquet":
@@ -68,9 +71,17 @@ def load_dataset(file_path: str | Path) -> pd.DataFrame:
 
         return df
 
+    except (OSError, IOError) as e:
+        raise DatasetLoadError(f"Failed to read dataset file {file_path}: I/O error: {e}") from e
     except pd.errors.EmptyDataError as e:
         raise DatasetLoadError(f"Dataset file is empty: {file_path}") from e
     except pd.errors.ParserError as e:
-        raise DatasetLoadError(f"Failed to parse dataset file: {e}") from e
+        raise DatasetLoadError(f"Failed to parse dataset file {file_path}: {e}") from e
+    except ImportError as e:
+        raise DatasetLoadError(
+            f"Failed to load dataset {file_path}: Missing required library for {suffix} format: {e}"
+        ) from e
+    except MemoryError as e:
+        raise DatasetLoadError(f"Failed to load dataset {file_path}: Insufficient memory: {e}") from e
     except Exception as e:
-        raise DatasetLoadError(f"Failed to load dataset: {e}") from e
+        raise DatasetLoadError(f"Unexpected error loading dataset {file_path}: {e}") from e
