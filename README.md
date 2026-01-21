@@ -290,10 +290,6 @@ Key points:
 
 For security vulnerabilities, please see [SECURITY.md](SECURITY.md). **Do not** open public issues for security concerns.
 
-## License
-
-[Add your license here]
-
 ## Support
 
 For issues, questions, or contributions, please [open an issue](link-to-issues) or [create a pull request](link-to-prs).
