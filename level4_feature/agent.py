@@ -5,12 +5,19 @@ The agent proposes features but NEVER executes them - that's done deterministica
 """
 
 import json
+import os
 from typing import Any, Optional
 
 from intent.schema import IntentSchema
 from level1_ingestion.schema_inferencer import SchemaMetadata
 from level2_quality.profiler import DatasetQualityProfile
-from utils import get_logger
+from utils import (
+    get_logger,
+    sanitize_column_name,
+    sanitize_json_for_prompt,
+    sanitize_prompt_variable,
+    sanitize_string_for_prompt,
+)
 
 from .feature_catalog import FeatureCatalog, get_catalog
 
@@ -85,6 +92,20 @@ class FeatureEngineeringAgent:
             logger.info(f"LLM proposed {len(proposals.get('features', []))} features")
             return proposals
 
+        except json.JSONDecodeError as e:
+            # For testing/debugging: optionally print what the LLM returned.
+            if os.getenv("AGENTPREP_PRINT_LLM_RESPONSE", "").strip() == "1":
+                snippet = response if isinstance(response, str) else str(response)
+                snippet = snippet[:2000]
+                print("\n--- AgentPrep: raw LLM response (truncated) ---")
+                print(snippet)
+                print("--- end raw LLM response ---\n")
+
+            logger.warning(
+                "LLM returned invalid JSON. Response snippet (first 500 chars): %s",
+                (response if isinstance(response, str) else str(response))[:500],
+            )
+            raise FeatureAgentError(f"LLM returned invalid JSON: {e}") from e
         except Exception as e:
             logger.error(f"Feature agent failed: {e}")
             raise FeatureAgentError(f"Feature agent failed: {e}") from e
@@ -118,10 +139,12 @@ class FeatureEngineeringAgent:
             if col_name == intent.task.target_column:
                 continue  # Skip target column
 
+            # Sanitize column name
+            sanitized_col_name = sanitize_column_name(col_name)
             col_quality = quality_profile.columns.get(col_name)
             col_info = {
-                "name": col_name,
-                "semantic_type": col_meta.semantic_type,
+                "name": sanitized_col_name,
+                "semantic_type": sanitize_string_for_prompt(col_meta.semantic_type),
                 "missing_percentage": round(col_meta.missing_percentage, 2),
                 "unique_count": col_meta.unique_count,
             }
@@ -138,23 +161,35 @@ class FeatureEngineeringAgent:
         # Get feature catalog summary
         catalog_summary = self.catalog.get_summary()
 
+        # Sanitize all user-provided values
+        sanitized_target_column = sanitize_column_name(intent.task.target_column)
+        sanitized_task_type = sanitize_string_for_prompt(str(intent.task.type))
+        sanitized_model_family = sanitize_string_for_prompt(str(intent.model.family))
+        sanitized_interpretability = sanitize_string_for_prompt(
+            str(intent.preferences.interpretability_priority)
+        )
+        
+        # Sanitize JSON data
+        sanitized_column_info_json = sanitize_json_for_prompt(column_info)
+        sanitized_catalog_summary_json = sanitize_json_for_prompt(catalog_summary)
+
         prompt = f"""You are a feature engineering assistant for ML preprocessing.
 
 TASK: Propose feature engineering transformations to improve model readiness.
 
 CONSTRAINTS:
-- Task type: {intent.task.type}
-- Model family: {intent.model.family}
+- Task type: {sanitized_task_type}
+- Model family: {sanitized_model_family}
 - Max features: {intent.constraints.max_features}
 - Max interactions: {intent.constraints.max_interactions}
-- Interpretability priority: {intent.preferences.interpretability_priority}
-- Target column: {intent.task.target_column} (NEVER use as input)
+- Interpretability priority: {sanitized_interpretability}
+- Target column: {sanitized_target_column} (NEVER use as input)
 
 AVAILABLE COLUMNS (excluding target):
-{json.dumps(column_info, indent=2)}
+{sanitized_column_info_json}
 
 FEATURE CATALOG (allowed transformations only):
-{json.dumps(catalog_summary, indent=2)}
+{sanitized_catalog_summary_json}
 
 RULES:
 1. Only propose transformations from the catalog above
@@ -182,29 +217,29 @@ Return ONLY valid JSON, no other text."""
         return prompt
 
     def _call_llm(self, prompt: str) -> str:
-        """Call LLM with prompt.
-
-        This is a placeholder - in production, this would call the actual LLM API.
-
-        Args:
-            prompt: Prompt string
-
-        Returns:
-            LLM response string
-
-        Raises:
-            FeatureAgentError: If LLM call fails
-        """
+        """Call LLM with prompt via the unified client."""
         if self.llm_client is None:
             raise FeatureAgentError("No LLM client available")
 
-        # Placeholder: In production, this would be:
-        # response = self.llm_client.complete(prompt)
-        # For now, raise error to indicate LLM not implemented
-        raise NotImplementedError(
-            "LLM client integration not implemented. "
-            "Provide an LLM client that implements a 'complete' method."
-        )
+        try:
+            # Choose a sensible default model based on provider, if available
+            provider = getattr(self.llm_client, "provider", None)
+            if provider == "openai":
+                model_name = "gpt-4"
+            elif provider == "anthropic":
+                model_name = "claude-3-opus-20240229"
+            elif provider == "gemini":
+                model_name = "gemini-2.5-flash-lite"
+            else:
+                model_name = None
+
+            return self.llm_client.complete(
+                prompt,
+                model=model_name,
+                temperature=0.2,
+            )
+        except Exception as e:
+            raise FeatureAgentError(f"Failed to call LLM: {e}") from e
 
     def _parse_response(self, response: str) -> dict[str, Any]:
         """Parse LLM response and validate structure.
@@ -219,8 +254,14 @@ Return ONLY valid JSON, no other text."""
             FeatureAgentError: If response is invalid
         """
         try:
-            # Try to parse JSON
-            data = json.loads(response)
+            # Try to parse JSON (strip optional ```json ... ``` fences)
+            text = response.strip()
+            if text.startswith("```"):
+                first_nl = text.find("\n")
+                last_ticks = text.rfind("```")
+                if first_nl != -1 and last_ticks != -1 and last_ticks > first_nl:
+                    text = text[first_nl + 1:last_ticks].strip()
+            data = json.loads(text)
         except json.JSONDecodeError as e:
             raise FeatureAgentError(
                 f"LLM returned invalid JSON: {e}"
