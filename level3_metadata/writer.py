@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 from typing import Optional
 
-from utils import get_logger
+from utils import PathValidationError, get_logger, validate_output_path
 
 from .metadata_schema import PipelineMetadata
 
@@ -67,29 +67,44 @@ class MetadataWriter:
         if not filename.endswith(".json"):
             filename += ".json"
 
-        # Build full path
-        output_path = self.output_dir / filename
+        # Sanitize filename to prevent path injection
+        from utils.file_helpers import sanitize_path_component
+        filename_base = filename.rsplit('.', 1)[0] if '.' in filename else filename
+        filename_ext = filename.rsplit('.', 1)[1] if '.' in filename else ''
+        sanitized_base = sanitize_path_component(filename_base)
+        sanitized_filename = f"{sanitized_base}.{filename_ext}" if filename_ext else sanitized_base
 
-        # Check if file exists
-        if output_path.exists() and not overwrite:
+        # Build full path
+        output_path = self.output_dir / sanitized_filename
+
+        # Resolve path to prevent symlink attacks
+        try:
+            resolved_output_path = output_path.resolve()
+            resolved_output_dir = resolved_output_path.parent
+        except (OSError, RuntimeError) as e:
+            logger.error(f"Failed to resolve output path {output_path}: {e}")
+            raise OSError(f"Failed to resolve output path: {e}") from e
+
+        # Check if file exists (using resolved path)
+        if resolved_output_path.exists() and not overwrite:
             raise FileExistsError(
-                f"Metadata file already exists: {output_path}. "
+                f"Metadata file already exists: {resolved_output_path}. "
                 "Set overwrite=True to overwrite."
             )
 
-        # Create directory if needed
+        # Create directory if needed (using resolved path)
         try:
-            self.output_dir.mkdir(parents=True, exist_ok=True)
+            resolved_output_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            logger.error(f"Failed to create output directory {self.output_dir}: {e}")
+            logger.error(f"Failed to create output directory {resolved_output_dir}: {e}")
             raise
 
-        # Write metadata as JSON
+        # Write metadata as JSON (using resolved path)
         try:
             json_str = metadata.to_json(indent=2)
-            output_path.write_text(json_str, encoding="utf-8")
-            logger.info(f"Metadata written to: {output_path}")
-            return output_path
+            resolved_output_path.write_text(json_str, encoding="utf-8")
+            logger.info(f"Metadata written to: {resolved_output_path}")
+            return resolved_output_path
         except Exception as e:
             logger.error(f"Failed to write metadata to {output_path}: {e}")
             raise
