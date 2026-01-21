@@ -40,13 +40,28 @@ class ArtifactExporter:
         """Initialize artifact exporter.
 
         Args:
-            output_dir: Base directory for exports
+            output_dir: Base directory for exports (should be pre-validated)
             run_id: Unique run identifier
         """
-        self.output_dir = Path(output_dir)
+        # Resolve output directory to prevent symlink attacks
+        try:
+            self.output_dir = Path(output_dir).resolve()
+        except (OSError, RuntimeError) as e:
+            logger.warning(f"Failed to resolve output directory, using as-is: {e}")
+            self.output_dir = Path(output_dir)
+        
         self.run_id = run_id
-        self.exports_dir = self.output_dir / "exports" / run_id
-        self.exports_dir.mkdir(parents=True, exist_ok=True)
+        # Sanitize run_id to prevent path injection
+        sanitized_run_id = "".join(c for c in run_id if c.isalnum() or c in ['-', '_', '.'])[:100]
+        self.exports_dir = self.output_dir / "exports" / sanitized_run_id
+        # Resolve exports directory before creating
+        try:
+            resolved_exports_dir = self.exports_dir.resolve()
+            resolved_exports_dir.mkdir(parents=True, exist_ok=True)
+            self.exports_dir = resolved_exports_dir
+        except (OSError, RuntimeError) as e:
+            logger.error(f"Failed to resolve or create exports directory: {e}")
+            raise
         logger.debug(f"ArtifactExporter initialized: {self.exports_dir}")
 
     def export_dataset(
@@ -67,8 +82,14 @@ class ArtifactExporter:
         exported_paths = {}
 
         try:
-            # Load dataset
-            df = pd.read_parquet(artifact.path) if artifact.format == "parquet" else pd.read_csv(artifact.path)
+            # Resolve artifact path to prevent symlink attacks
+            try:
+                resolved_artifact_path = Path(artifact.path).resolve()
+            except (OSError, RuntimeError) as e:
+                raise ExportError(f"Failed to resolve artifact path {artifact.path}: {e}") from e
+            
+            # Load dataset using resolved path
+            df = pd.read_parquet(resolved_artifact_path) if artifact.format == "parquet" else pd.read_csv(resolved_artifact_path)
 
             for format_type in formats:
                 extension = ".csv" if format_type == "csv" else ".parquet"

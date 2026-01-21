@@ -37,13 +37,28 @@ class ReportGenerator:
         """Initialize report generator.
 
         Args:
-            output_dir: Base directory for reports
+            output_dir: Base directory for reports (should be pre-validated)
             run_id: Unique run identifier
         """
-        self.output_dir = Path(output_dir)
+        # Resolve output directory to prevent symlink attacks
+        try:
+            self.output_dir = Path(output_dir).resolve()
+        except (OSError, RuntimeError) as e:
+            logger.warning(f"Failed to resolve output directory, using as-is: {e}")
+            self.output_dir = Path(output_dir)
+        
         self.run_id = run_id
-        self.reports_dir = self.output_dir / "reports" / run_id
-        self.reports_dir.mkdir(parents=True, exist_ok=True)
+        # Sanitize run_id to prevent path injection
+        sanitized_run_id = "".join(c for c in run_id if c.isalnum() or c in ['-', '_', '.'])[:100]
+        self.reports_dir = self.output_dir / "reports" / sanitized_run_id
+        # Resolve reports directory before creating
+        try:
+            resolved_reports_dir = self.reports_dir.resolve()
+            resolved_reports_dir.mkdir(parents=True, exist_ok=True)
+            self.reports_dir = resolved_reports_dir
+        except (OSError, RuntimeError) as e:
+            logger.error(f"Failed to resolve or create reports directory: {e}")
+            raise
         logger.debug(f"ReportGenerator initialized: {self.reports_dir}")
 
     def generate_run_report(self, manifest: ArtifactManifest) -> Path:

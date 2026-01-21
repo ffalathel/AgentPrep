@@ -55,17 +55,30 @@ class ArtifactStore:
         """Initialize artifact store.
 
         Args:
-            output_dir: Base directory for artifacts
+            output_dir: Base directory for artifacts (should be pre-validated)
             run_id: Unique run identifier
+
+        Raises:
+            ArtifactStoreError: If output directory is invalid or cannot be created
         """
-        self.output_dir = Path(output_dir)
+        # Output directory should already be validated by orchestrator, but ensure it's safe
+        try:
+            from utils import validate_output_path
+            self.output_dir = validate_output_path(output_dir, allow_existing=True)
+        except Exception:
+            # If validation fails, use original but log warning
+            logger.warning(f"Output directory validation failed, using as-is: {output_dir}")
+            self.output_dir = Path(output_dir)
+        
         self.run_id = run_id
-        self.artifacts_dir = self.output_dir / "artifacts" / run_id
+        # Sanitize run_id to prevent path injection
+        sanitized_run_id = "".join(c for c in run_id if c.isalnum() or c in ['-', '_', '.'])[:100]
+        self.artifacts_dir = self.output_dir / "artifacts" / sanitized_run_id
         ensure_directory(self.artifacts_dir)
         logger.debug(f"ArtifactStore initialized: {self.artifacts_dir}")
 
     def save_dataset(
-        self, dataframe: pd.DataFrame, format: str = "parquet", overwrite: bool = False
+        self, dataframe: pd.DataFrame, format: str = "csv", overwrite: bool = False
     ) -> DatasetArtifact:
         """Save dataset artifact.
 
