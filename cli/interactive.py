@@ -17,11 +17,14 @@ from intent.schema import (
     TaskType,
 )
 from level1_ingestion.loader import DatasetLoadError, load_dataset
-from utils import get_logger
+from utils import PathValidationError, get_logger, validate_output_path
 
 from .constraint_advisor import ConstraintAdvisor
 
 logger = get_logger(__name__)
+
+# Tracks the last LLM provider selected in this interactive session.
+_SELECTED_LLM_PROVIDER: Optional[str] = None
 
 
 def prompt_dataset_path() -> tuple[str, pd.DataFrame]:
@@ -253,11 +256,83 @@ def prompt_output_path() -> Optional[str]:
 
     Returns:
         Output path or None for default
+
+    Raises:
+        SystemExit: If path validation fails
     """
-    path = input("\nOutput directory (press Enter for default): ").strip()
-    if not path:
-        return None
-    return path
+    while True:
+        path = input("\nOutput directory (press Enter for default): ").strip()
+        if not path:
+            return None
+
+        try:
+            # Validate path for security (prevents directory traversal)
+            validated_path = validate_output_path(path)
+            return str(validated_path)
+        except PathValidationError as e:
+            print(f"✗ Invalid output path: {e}")
+            retry = input("Try again? (y/n): ").strip().lower()
+            if retry != "y":
+                print("Cancelled.")
+                sys.exit(1)
+        except Exception as e:
+            print(f"✗ Unexpected error validating path: {e}")
+            retry = input("Try again? (y/n): ").strip().lower()
+            if retry != "y":
+                print("Cancelled.")
+                sys.exit(1)
+
+
+def prompt_llm_provider() -> Optional[str]:
+    """Ask the user which LLM provider to use (or none).
+
+    Returns:
+        Provider identifier ("openai", "anthropic", "gemini") or None for no LLM.
+    """
+    global _SELECTED_LLM_PROVIDER
+
+    print("\nSelect LLM provider (optional):")
+    print("  [1] OpenAI")
+    print("  [2] Anthropic")
+    print("  [3] Gemini")
+    print("  [4] None (run without LLM proposals)")
+
+    prompt_text = "Select (1-4) [4]: "
+
+    while True:
+        try:
+            choice = input(prompt_text).strip().lower()
+            if not choice:
+                choice = "4"
+
+            if choice in ("1", "openai"):
+                provider = "openai"
+            elif choice in ("2", "anthropic"):
+                provider = "anthropic"
+            elif choice in ("3", "gemini"):
+                provider = "gemini"
+            elif choice in ("4", "none", "np", "no", "n"):
+                provider = None
+            else:
+                print("✗ Invalid selection. Please enter 1, 2, 3, or 4 (or 'np' for no provider).")
+                continue
+
+            _SELECTED_LLM_PROVIDER = provider
+
+            if provider is None:
+                print("ℹ No LLM provider selected. Agents will run in stub mode (no LLM proposals).")
+            else:
+                print(f"✓ Using LLM provider: {provider}")
+
+            return provider
+        except KeyboardInterrupt:
+            print("\n\nCancelled.")
+            sys.exit(1)
+
+
+def get_selected_llm_provider() -> Optional[str]:
+    """Return the LLM provider selected in this interactive session, if any."""
+    return _SELECTED_LLM_PROVIDER
 
 
 def display_summary(intent_dict: dict) -> None:
@@ -295,6 +370,9 @@ def collect_intent_interactively() -> dict:
     print("Welcome to AgentPrep!")
     print("=" * 60)
     print("\nThis interactive wizard will guide you through configuring your preprocessing pipeline.")
+
+    # Step 0: LLM provider selection (optional, before any work)
+    prompt_llm_provider()
 
     # Step 1: Dataset path and loading
     dataset_path, dataframe = prompt_dataset_path()
