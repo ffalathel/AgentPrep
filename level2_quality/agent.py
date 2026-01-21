@@ -11,12 +11,18 @@ Safety boundaries:
 """
 
 import json
+import os
 from typing import Any, Optional
 
 from intent.schema import IntentSchema
 from level1_ingestion.schema_inferencer import SchemaMetadata
 from level2_quality.profiler import DatasetQualityProfile
-from utils import get_logger
+from utils import (
+    get_logger,
+    sanitize_column_name,
+    sanitize_json_for_prompt,
+    sanitize_string_for_prompt,
+)
 
 logger = get_logger(__name__)
 
@@ -65,9 +71,13 @@ class DataQualityAgent:
         column_info = []
         for col_name, col_profile in quality_profile.columns.items():
             col_schema = schema_metadata.columns.get(col_name)
+            # Sanitize column name
+            sanitized_col_name = sanitize_column_name(col_name)
             col_info = {
-                "column": col_name,
-                "semantic_type": col_schema.semantic_type if col_schema else "unknown",
+                "column": sanitized_col_name,
+                "semantic_type": sanitize_string_for_prompt(
+                    col_schema.semantic_type if col_schema else "unknown"
+                ),
                 "missing_percentage": col_profile.missing_percentage,
                 "missing_count": col_profile.missing_count,
                 "unique_count": col_profile.unique_count,
@@ -87,24 +97,33 @@ class DataQualityAgent:
 
             column_info.append(col_info)
 
+        # Sanitize all user-provided values
+        sanitized_target_column = sanitize_column_name(intent.task.target_column)
+        sanitized_task_type = sanitize_string_for_prompt(intent.task.type.value)
+        sanitized_model_family = sanitize_string_for_prompt(intent.model.family.value)
+        sanitized_outlier_policy = sanitize_string_for_prompt(intent.preferences.outlier_policy.value)
+        
+        # Sanitize JSON data
+        sanitized_column_info_json = sanitize_json_for_prompt(column_info)
+
         prompt = f"""You are a data quality expert analyzing a dataset for ML preprocessing.
 
 Dataset Summary:
 - Total rows: {quality_profile.total_rows}
 - Total columns: {quality_profile.total_columns}
-- Task type: {intent.task.type.value}
-- Target column: {intent.task.target_column}
-- Model family: {intent.model.family.value}
-- Outlier policy: {intent.preferences.outlier_policy.value}
+- Task type: {sanitized_task_type}
+- Target column: {sanitized_target_column}
+- Model family: {sanitized_model_family}
+- Outlier policy: {sanitized_outlier_policy}
 - Max features: {intent.constraints.max_features}
 
 Column Quality Metrics:
-{json.dumps(column_info, indent=2)}
+{sanitized_column_info_json}
 
 Constraints:
-- Target column '{intent.task.target_column}' must NEVER be dropped or modified
+- Target column '{sanitized_target_column}' must NEVER be dropped or modified
 - Maximum {intent.constraints.max_features} feature columns allowed
-- Outlier policy: {intent.preferences.outlier_policy.value}
+- Outlier policy: {sanitized_outlier_policy}
 - Column dropping allowed: {intent.preferences.allow_column_dropping}
 
 Analyze the quality metrics and propose data cleaning actions. Return ONLY valid JSON in this exact format:
@@ -161,17 +180,21 @@ Return ONLY the JSON, no other text."""
 
         try:
             if self.llm_client is None:
-                # Stub implementation for testing/development
                 logger.warning("No LLM client provided, returning empty actions")
                 return {"actions": []}
 
-            # Call LLM (this would be implemented with actual LLM client)
-            # For now, this is a placeholder
             response = self._call_llm(prompt)
 
             # Parse and validate JSON response
             if isinstance(response, str):
-                actions_data = json.loads(response)
+                text = response.strip()
+                # Handle common LLM pattern of wrapping JSON in ```json ... ``` fences
+                if text.startswith("```"):
+                    first_nl = text.find("\n")
+                    last_ticks = text.rfind("```")
+                    if first_nl != -1 and last_ticks != -1 and last_ticks > first_nl:
+                        text = text[first_nl + 1:last_ticks].strip()
+                actions_data = json.loads(text)
             else:
                 actions_data = response
 
@@ -186,30 +209,50 @@ Return ONLY the JSON, no other text."""
             return actions_data
 
         except json.JSONDecodeError as e:
+            # For testing/debugging: optionally print what the LLM returned.
+            if os.getenv("AGENTPREP_PRINT_LLM_RESPONSE", "").strip() == "1":
+                snippet = (response if isinstance(response, str) else str(response))
+                snippet = snippet[:2000]
+                print("\n--- AgentPrep: raw LLM response (truncated) ---")
+                print(snippet)
+                print("--- end raw LLM response ---\n")
+
+            # Always log a short snippet to help debugging without flooding logs.
+            try:
+                snippet = (response if isinstance(response, str) else str(response))
+                logger.warning(
+                    "LLM returned invalid JSON. Response snippet (first 500 chars): %s",
+                    snippet[:500],
+                )
+            except Exception:
+                pass
+
             raise AgentError(f"LLM returned invalid JSON: {e}") from e
         except Exception as e:
             raise AgentError(f"Failed to get LLM proposals: {e}") from e
 
     def _call_llm(self, prompt: str) -> str:
-        """Call the LLM with the prompt.
+        """Call the LLM with the prompt using the unified client."""
+        if self.llm_client is None:
+            raise AgentError("No LLM client available")
 
-        This is a placeholder method. In production, this would call
-        the actual LLM client (OpenAI, Anthropic, etc.).
+        # Uses utils.llm_client.LLMClientWrapper.complete()
+        try:
+            # Choose a sensible default model based on provider, if available
+            provider = getattr(self.llm_client, "provider", None)
+            if provider == "openai":
+                model_name = "gpt-4"
+            elif provider == "anthropic":
+                model_name = "claude-3-opus-20240229"
+            elif provider == "gemini":
+                model_name = "gemini-2.5-flash-lite"
+            else:
+                model_name = None
 
-        Args:
-            prompt: Formatted prompt string
-
-        Returns:
-            LLM response string (should be JSON)
-
-        Raises:
-            AgentError: If LLM call fails
-        """
-        # Placeholder implementation
-        # In production, this would be:
-        # response = self.llm_client.complete(prompt, ...)
-        # return response
-
-        raise AgentError(
-            "LLM client not implemented. Provide an LLM client in constructor."
-        )
+            return self.llm_client.complete(
+                prompt,
+                model=model_name,
+                temperature=0.2,
+            )
+        except Exception as e:
+            raise AgentError(f"Failed to call LLM: {e}") from e
