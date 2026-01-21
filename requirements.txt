@@ -1,0 +1,14 @@
+# Core dependencies for AgentPrep
+pandas>=1.5.0,<3.0.0
+pydantic>=2.0.0,<3.0.0
+pyyaml>=6.0.0,<7.0.0
+numpy>=1.24.0,<2.0.0
+
+# Optional dependencies for advanced features
+# scipy>=1.10.0  # For distribution shift detection (optional)
+# imbalanced-learn>=0.11.0  # For class imbalance remediation (optional)
+
+# Optional LLM provider SDKs (install as needed)
+# openai>=1.0.0  # For OpenAI integration
+# anthropic>=0.18.0  # For Anthropic integration
+# google-generativeai>=0.3.0  # For Google Gemini integration
