@@ -41,7 +41,7 @@ cd AgentPrep
 
 2. Install dependencies:
 ```bash
-pip install pandas pydantic pyyaml
+pip install -r requirements.txt
 ```
 
 3. (Optional) Install LLM provider SDKs for AI agent features:
@@ -63,21 +63,22 @@ pip install google-generativeai
 Run the interactive pipeline:
 
 ```bash
-python cli.py run
+python -m cli run
 ```
 
 The interactive wizard will guide you through:
-1. **Dataset Selection**: Upload your CSV or Parquet file
-2. **Task Configuration**: Select task type (classification, regression, time series, clustering)
-3. **Target Column**: Choose your target variable from the dataset columns
-4. **Model Family**: Select your intended model type (tree-based, linear, neural)
-5. **Constraint Suggestions**: Get intelligent suggestions for pipeline constraints
-6. **Output Path**: Specify where to save pipeline outputs
+1. **LLM Provider (optional)**: Choose OpenAI, Anthropic, Gemini, or \"None\" (no LLM usage)
+2. **Dataset Selection**: Upload your CSV or Parquet file
+3. **Task Configuration**: Select task type (classification, regression, time series, clustering)
+4. **Target Column**: Choose your target variable from the dataset columns
+5. **Model Family**: Select your intended model type (tree-based, linear, neural)
+6. **Constraint Suggestions**: Get intelligent suggestions for pipeline constraints
+7. **Output Path**: Specify where to save pipeline outputs
 
 ### Example Session
 
 ```bash
-$ python cli.py run
+$ python -m cli run
 
 ============================================================
 Welcome to AgentPrep!
@@ -114,17 +115,20 @@ Starting preprocessing pipeline...
 
 ```bash
 # Run with verbose logging
-python cli.py run --verbose
+python -m cli run --verbose
 
 # Specify output directory
-python cli.py run --output ./results
+python -m cli run --output ./results
+
+# Run with config file (legacy mode)
+python -m cli run --config intent.yaml
 ```
 
 ## Configuration
 
 ### Environment Variables
 
-Set API keys for LLM providers (optional - agents work without them in stub mode):
+Set API keys for LLM providers (optional - agents work without them in stub mode). At runtime, the CLI will ask which provider you want to use (or \"None\").
 
 ```bash
 # OpenAI
@@ -216,7 +220,7 @@ AgentPrep/
 │   ├── constants.py       # Application constants
 │   ├── file_helpers.py    # File utilities
 │   └── llm_client.py      # LLM client wrapper
-└── cli.py                  # CLI entry point
+└── cli/                    # CLI package (use: python -m cli)
 ```
 
 ## Supported Formats
@@ -236,10 +240,32 @@ AgentPrep/
 
 ### Running Tests
 
-Tests are located in the `tests/` directory (excluded from git). To run tests:
+Tests are located in the `tests/` directory. To run tests:
 
 ```bash
+# Install test dependencies
+pip install -r requirements-test.txt
+
+# Run all tests
 pytest
+
+# Run with coverage
+pytest --cov=. --cov-report=html
+```
+
+### Code Quality
+
+We use `black` for formatting and `ruff` for linting:
+
+```bash
+# Install dev dependencies
+pip install -e ".[dev]"
+
+# Format code
+black .
+
+# Lint code
+ruff check .
 ```
 
 ### Code Structure
@@ -251,10 +277,18 @@ pytest
 
 ## Contributing
 
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+Key points:
 1. Follow the existing code structure and naming conventions
 2. Add tests for new features
 3. Update documentation as needed
 4. Ensure all tests pass before submitting
+5. Format code with `black` and lint with `ruff`
+
+## Security
+
+For security vulnerabilities, please see [SECURITY.md](SECURITY.md). **Do not** open public issues for security concerns.
 
 ## License
 
