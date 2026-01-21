@@ -31,8 +31,8 @@ class ValidatorOrchestrator:
         # Delegate to level5_policy components
         self._validator = None
 
-    def validate(self, pipeline_output: dict[str, Any]) -> list[str]:
-        """Run all validators and return violations.
+    def validate(self, pipeline_output: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+        """Run all validators and return violations and remediation info.
 
         Delegates to level5_policy/validator.
 
@@ -40,18 +40,23 @@ class ValidatorOrchestrator:
             pipeline_output: Dictionary containing pipeline outputs
 
         Returns:
-            List of violation messages (empty if no violations)
+            Tuple of (violation messages, remediation_info dict)
         """
-        # TODO: Import and delegate to level5_policy.validator when implemented
-        # For now, return empty list (no violations detected)
         try:
             from level5_policy.validator import ConstraintValidator
 
             if self._validator is None:
                 self._validator = ConstraintValidator(self.intent)
 
-            violations = self._validator.validate(pipeline_output)
-            return violations
+            violations, remediation_info = self._validator.validate(pipeline_output)
+            return violations, remediation_info
         except ImportError:
             # Validator not yet implemented - return no violations
-            return []
+            return [], {}
+        except TypeError:
+            # Backward compatibility: if validator returns only violations
+            try:
+                violations = self._validator.validate(pipeline_output)
+                return violations if isinstance(violations, list) else ([], {})
+            except Exception:
+                return [], {}

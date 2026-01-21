@@ -25,7 +25,7 @@ from intent.schema import IntentSchema
 
 from .policies import PolicyEnforcer
 from .validators import ValidatorOrchestrator
-
+import time
 
 @dataclass
 class GovernanceDecision:
@@ -39,6 +39,12 @@ class GovernanceDecision:
     violations: list[str]
     leakage_detected: bool
     reason: str  # One-sentence explanation
+    remediation_info: dict[str, Any] = None  # Information for auto-remediation
+
+    def __post_init__(self):
+        """Initialize remediation_info if not provided."""
+        if self.remediation_info is None:
+            self.remediation_info = {}
 
     def __str__(self) -> str:
         """Human-readable representation."""
@@ -62,6 +68,68 @@ class GovernanceGatekeeper:
         self.intent = intent
         self.policy_enforcer = PolicyEnforcer(intent)
         self.validator_orchestrator = ValidatorOrchestrator(intent)
+
+    def _find_leaking_features(self, pipeline_output: dict[str, Any]) -> list[str]:
+        """Identify features that likely cause leakage.
+
+        Uses simple deterministic rules aligned with the leakage detector:
+        - Target column used as input to a feature
+        - Feature names containing suspicious target-like patterns
+        """
+        feature_provenance = pipeline_output.get("feature_provenance", [])
+        target_column = pipeline_output.get("target_column")
+        feature_dataframe = pipeline_output.get("feature_dataframe")
+
+        if not feature_provenance or not target_column:
+            return []
+
+        leaking: set[str] = set()
+        target = target_column
+
+        # 1) Target used as input (direct leakage)
+        for prov in feature_provenance:
+            source_cols = getattr(prov, "source_columns", [])
+            feature_name = getattr(prov, "feature_name", None)
+            if feature_name is None:
+                continue
+            if target in source_cols:
+                leaking.add(feature_name)
+
+        # 2) Suspicious feature names (proxy leakage)
+        suspicious_patterns = [
+            target.lower(),
+            "target",
+            "label",
+            "y_",
+            "_target",
+            "_label",
+            f"{target}_",
+            f"_{target}",
+        ]
+
+        for prov in feature_provenance:
+            feature_name = getattr(prov, "feature_name", None)
+            if not feature_name:
+                continue
+            col_lower = feature_name.lower()
+            if any(pattern in col_lower for pattern in suspicious_patterns):
+                leaking.add(feature_name)
+
+        # Only keep leaking features that still exist in the current dataframe
+        if feature_dataframe is not None:
+            df_cols_lower = {c.lower(): c for c in feature_dataframe.columns}
+            filtered = []
+            for feat in leaking:
+                if feat is None:
+                    continue
+                if feat in feature_dataframe.columns:
+                    filtered.append(feat)
+                elif feat.lower() in df_cols_lower:
+                    filtered.append(df_cols_lower[feat.lower()])
+            result = sorted(set(filtered))
+        else:
+            result = sorted(leaking)
+        return result
 
     def decide(
         self,
@@ -90,6 +158,7 @@ class GovernanceGatekeeper:
         """
         violations: list[str] = []
         leakage_detected = False
+        remediation_info: dict[str, Any] = {}
 
         # Step 1: Invoke policy enforcement
         policy_violations = self.policy_enforcer.enforce(pipeline_output)
@@ -97,12 +166,20 @@ class GovernanceGatekeeper:
 
         # Step 2: Invoke leakage detection
         leakage_detected = self.policy_enforcer.detect_leakage(pipeline_output)
+        leaking_features = []
         if leakage_detected:
             violations.append("Feature leakage detected")
+            # Find specific leaking features for remediation
+            leaking_features = self._find_leaking_features(pipeline_output)
+            remediation_info["leakage"] = {
+                "features_to_remove": leaking_features,
+            }
 
         # Step 3: Invoke validators
-        validator_violations = self.validator_orchestrator.validate(pipeline_output)
+        validator_violations, validator_remediation_info = self.validator_orchestrator.validate(pipeline_output)
         violations.extend(validator_violations)
+        # Merge validator remediation info with leakage remediation info
+        remediation_info.update(validator_remediation_info)
 
         # Step 4: Aggregate and decide
         approved = len(violations) == 0 and not leakage_detected
@@ -124,4 +201,5 @@ class GovernanceGatekeeper:
             violations=violations,
             leakage_detected=leakage_detected,
             reason=reason,
+            remediation_info=remediation_info,
         )

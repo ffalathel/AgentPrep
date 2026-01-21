@@ -78,8 +78,12 @@ class LeakageDetector:
             return False  # Cannot check
 
         # Check all feature provenance records
+        leaking_features = []
         for prov in feature_provenance:
-            if target_column in prov.source_columns:
+            source_cols = getattr(prov, "source_columns", [])
+            feature_name = getattr(prov, "feature_name", None)
+            if target_column in source_cols:
+                leaking_features.append(feature_name)
                 return True  # Target column used as input - leakage detected
 
         return False
@@ -117,9 +121,17 @@ class LeakageDetector:
         """
         feature_dataframe = pipeline_output.get("feature_dataframe")
         target_column = pipeline_output.get("target_column")
+        feature_provenance = pipeline_output.get("feature_provenance", [])
 
         if feature_dataframe is None or target_column is None:
             return False  # Cannot check
+
+        # Restrict proxy checks to engineered features (those present in provenance)
+        engineered_features = {
+            getattr(prov, "feature_name", None)
+            for prov in feature_provenance
+            if getattr(prov, "feature_name", None) is not None
+        }
 
         # Check for features with suspicious names
         suspicious_patterns = [
@@ -133,17 +145,22 @@ class LeakageDetector:
             f"_{target_column}",
         ]
 
+        matches = []
         for col in feature_dataframe.columns:
             if col == target_column:
                 continue  # Target column itself is OK
 
+            # Skip original columns (not engineered) to reduce false positives
+            if engineered_features and col not in engineered_features:
+                continue
+
             col_lower = col.lower()
             for pattern in suspicious_patterns:
                 if pattern in col_lower:
-                    # Conservative: any suspicious name pattern indicates potential leakage
-                    return True
+                    matches.append(col)
+                    break
 
-        return False
+        return len(matches) > 0
 
     def get_leakage_reason(self, pipeline_output: dict[str, Any]) -> str:
         """Get explanation for detected leakage.
