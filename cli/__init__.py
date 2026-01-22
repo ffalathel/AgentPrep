@@ -114,7 +114,6 @@ def run_pipeline_with_intent(intent, output_path: str | None = None) -> int:
         # Don't prompt in non-interactive contexts (e.g., tests, scripts)
         # Only prompt if we're in an interactive terminal session
         if provider is None and prompt_llm_provider is not None:
-            import sys
             if sys.stdin.isatty() and sys.stdout.isatty():
                 # Fallback: if not already chosen (e.g. non-interactive use), ask now
                 provider = prompt_llm_provider()
