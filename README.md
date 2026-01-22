@@ -4,13 +4,13 @@
 
 ## Features
 
-- 🤖 **AI-Powered Agents**: Leverages LLM agents (OpenAI, Anthropic, Gemini) for intelligent data quality improvements and feature engineering suggestions
-- ✅ **Deterministic Validation**: All agent proposals are validated and executed deterministically for reproducibility
-- 📊 **Interactive CLI**: User-friendly wizard interface - no configuration files required
-- 🎯 **Constraint Advisor**: Heuristic-based suggestions for pipeline constraints based on your dataset
-- 🔒 **Governance & Policy**: Built-in policy enforcement and data leakage detection
-- 📦 **Artifact Management**: Comprehensive artifact tracking, storage, and reporting
-- 🔍 **Metadata Tracking**: Full provenance and metadata generation for auditability
+- **AI-Powered Agents**: Leverages LLM agents (OpenAI, Anthropic, Gemini) for intelligent data quality improvements and feature engineering suggestions
+- **Deterministic Validation**: All agent proposals are validated and executed deterministically for reproducibility
+- **Interactive CLI**: User-friendly wizard interface - no configuration files required
+- **Constraint Advisor**: Heuristic-based suggestions for pipeline constraints based on your dataset
+- **Governance & Policy**: Built-in policy enforcement and data leakage detection
+- **Artifact Management**: Comprehensive artifact tracking, storage, and reporting
+- **Metadata Tracking**: Full provenance and metadata generation for auditability
 
 ## Architecture
 
