@@ -19,9 +19,11 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
 # Virtual environments
 venv/
+venv_test/
 env/
 ENV/
 .venv
@@ -43,16 +45,19 @@ htmlcov/
 .tox/
 .hypothesis/
 pytest.ini
-requirements-test.txt
 *.cover
+.pytest_cache
 
-# Demo files
+# Demo/Example files
 demo_*.csv
 demo_*.yaml
 demo.sh
 DEMO_README.md
 example_intent.yaml
 prd.md
+condodata_*.csv
+*_metadata_*.json
+
 # Jupyter Notebooks
 .ipynb_checkpoints/
 *.ipynb
@@ -68,3 +73,12 @@ prd.md
 *.tmp
 *.bak
 *.swp
+
+# Pipeline outputs (generated at runtime)
+artifacts/
+reports/
+output/
+*.parquet
+
+# Development scripts
+setup_test_env.sh

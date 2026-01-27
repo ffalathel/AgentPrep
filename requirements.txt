@@ -3,6 +3,7 @@ pandas>=1.5.0,<3.0.0
 pydantic>=2.0.0,<3.0.0
 pyyaml>=6.0.0,<7.0.0
 numpy>=1.24.0,<2.0.0
+pyarrow>=10.0.0  # For parquet support
 
 # Optional dependencies for advanced features
 # scipy>=1.10.0  # For distribution shift detection (optional)
@@ -12,3 +13,9 @@ numpy>=1.24.0,<2.0.0
 # openai>=1.0.0  # For OpenAI integration
 # anthropic>=0.18.0  # For Anthropic integration
 # google-generativeai>=0.3.0  # For Google Gemini integration
+
+# Development references
+# pytest>=7.0.0
+# pytest-cov>=4.0.0
+# black>=23.0.0
+# ruff>=0.1.0
