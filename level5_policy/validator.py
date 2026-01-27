@@ -88,10 +88,10 @@ class ConstraintValidator:
             self.protected_attribute_detector = None
             self.information_loss_detector = None
 
-    def validate(self, pipeline_output: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+    def validate(self, pipeline_output: dict[str, Any]) -> tuple[list[str], list[str], dict[str, Any]]:
         """Validate pipeline output against constraints.
 
-        This method checks all constraints and returns violations.
+        This method checks all constraints and returns violations and warnings.
         It does NOT modify data or suggest fixes.
 
         Args:
@@ -104,9 +104,10 @@ class ConstraintValidator:
                 - original_column_count: Number of columns in original dataset
 
         Returns:
-            Tuple of (violation messages, remediation_info dict)
+            Tuple of (blocking violation messages, warning messages, remediation_info dict)
         """
         violations: list[str] = []
+        warnings: list[str] = []
         remediation_info: dict[str, Any] = {}
 
         # Validate feature count
@@ -131,11 +132,12 @@ class ConstraintValidator:
 
         # Data quality checks (warnings or violations based on config)
         if DATA_QUALITY_DETECTORS_AVAILABLE:
-            quality_violations, quality_remediation = self._validate_data_quality(pipeline_output)
+            quality_violations, quality_warnings, quality_remediation = self._validate_data_quality(pipeline_output)
             violations.extend(quality_violations)
+            warnings.extend(quality_warnings)
             remediation_info.update(quality_remediation)
 
-        return violations, remediation_info
+        return violations, warnings, remediation_info
 
     def _validate_feature_count(self, pipeline_output: dict[str, Any]) -> str:
         """Validate feature count constraint.
@@ -214,13 +216,14 @@ class ConstraintValidator:
 
         return ""
 
-    def _validate_data_quality(self, pipeline_output: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+    def _validate_data_quality(self, pipeline_output: dict[str, Any]) -> tuple[list[str], list[str], dict[str, Any]]:
         """Validate data quality issues.
 
         Returns:
-            Tuple of (violation/warning messages, remediation_info dict)
+            Tuple of (blocking violation messages, warning messages, remediation_info dict)
         """
         violations = []
+        warnings = []
         remediation_info: dict[str, Any] = {}
         warn_only = self.intent.data_quality.warn_on_quality_issues
 
@@ -283,8 +286,7 @@ class ConstraintValidator:
                 if protected_result.protected_attributes_detected:
                     msg = f"Protected attributes detected: {', '.join(protected_result.detected_attributes)}"
                     # Always warn, never block (user decision)
-                    if warn_only:
-                        violations.append(f"WARNING: {msg}")
+                    warnings.append(msg)
             except Exception:
                 pass  # Skip if detection fails
 
@@ -322,4 +324,4 @@ class ConstraintValidator:
             except Exception:
                 pass  # Skip if detection fails
 
-        return violations, remediation_info
+        return violations, warnings, remediation_info

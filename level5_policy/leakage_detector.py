@@ -133,6 +133,11 @@ class LeakageDetector:
             if getattr(prov, "feature_name", None) is not None
         }
 
+        # If there are no engineered features, there's nothing to check for proxy leakage
+        # (original columns are assumed to be valid - they were provided by the user)
+        if not engineered_features:
+            return False
+
         # Check for features with suspicious names
         suspicious_patterns = [
             target_column.lower(),
@@ -146,13 +151,12 @@ class LeakageDetector:
         ]
 
         matches = []
-        for col in feature_dataframe.columns:
+        # Only check engineered features (not original columns)
+        for col in engineered_features:
+            if col not in feature_dataframe.columns:
+                continue  # Feature was dropped or doesn't exist
             if col == target_column:
                 continue  # Target column itself is OK
-
-            # Skip original columns (not engineered) to reduce false positives
-            if engineered_features and col not in engineered_features:
-                continue
 
             col_lower = col.lower()
             for pattern in suspicious_patterns:

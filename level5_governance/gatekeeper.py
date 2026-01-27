@@ -36,15 +36,18 @@ class GovernanceDecision:
     """
 
     approved: bool
-    violations: list[str]
-    leakage_detected: bool
-    reason: str  # One-sentence explanation
+    violations: list[str]  # Blocking violations that cause rejection
+    warnings: list[str] = None  # Informational warnings that don't block
+    leakage_detected: bool = False
+    reason: str = ""  # One-sentence explanation
     remediation_info: dict[str, Any] = None  # Information for auto-remediation
 
     def __post_init__(self):
-        """Initialize remediation_info if not provided."""
+        """Initialize remediation_info and warnings if not provided."""
         if self.remediation_info is None:
             self.remediation_info = {}
+        if self.warnings is None:
+            self.warnings = []
 
     def __str__(self) -> str:
         """Human-readable representation."""
@@ -176,12 +179,25 @@ class GovernanceGatekeeper:
             }
 
         # Step 3: Invoke validators
-        validator_violations, validator_remediation_info = self.validator_orchestrator.validate(pipeline_output)
+        validator_result = self.validator_orchestrator.validate(pipeline_output)
+        # Handle both old format (violations, remediation_info) and new format (violations, warnings, remediation_info)
+        if len(validator_result) == 2:
+            validator_violations, validator_remediation_info = validator_result
+            validator_warnings = []
+        elif len(validator_result) == 3:
+            validator_violations, validator_warnings, validator_remediation_info = validator_result
+        else:
+            validator_violations = []
+            validator_warnings = []
+            validator_remediation_info = {}
+        
         violations.extend(validator_violations)
+        warnings = list(validator_warnings)  # Collect warnings separately
         # Merge validator remediation info with leakage remediation info
         remediation_info.update(validator_remediation_info)
 
         # Step 4: Aggregate and decide
+        # Only reject on blocking violations, not warnings
         approved = len(violations) == 0 and not leakage_detected
 
         # Step 5: Produce explainable reason
@@ -199,6 +215,7 @@ class GovernanceGatekeeper:
         return GovernanceDecision(
             approved=approved,
             violations=violations,
+            warnings=warnings,
             leakage_detected=leakage_detected,
             reason=reason,
             remediation_info=remediation_info,

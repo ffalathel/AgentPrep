@@ -31,8 +31,8 @@ class ValidatorOrchestrator:
         # Delegate to level5_policy components
         self._validator = None
 
-    def validate(self, pipeline_output: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
-        """Run all validators and return violations and remediation info.
+    def validate(self, pipeline_output: dict[str, Any]) -> tuple[list[str], list[str], dict[str, Any]]:
+        """Run all validators and return violations, warnings, and remediation info.
 
         Delegates to level5_policy/validator.
 
@@ -40,7 +40,7 @@ class ValidatorOrchestrator:
             pipeline_output: Dictionary containing pipeline outputs
 
         Returns:
-            Tuple of (violation messages, remediation_info dict)
+            Tuple of (blocking violation messages, warning messages, remediation_info dict)
         """
         try:
             from level5_policy.validator import ConstraintValidator
@@ -48,15 +48,29 @@ class ValidatorOrchestrator:
             if self._validator is None:
                 self._validator = ConstraintValidator(self.intent)
 
-            violations, remediation_info = self._validator.validate(pipeline_output)
-            return violations, remediation_info
+            result = self._validator.validate(pipeline_output)
+            # Handle both old format (violations, remediation_info) and new format (violations, warnings, remediation_info)
+            if len(result) == 2:
+                violations, remediation_info = result
+                return violations, [], remediation_info
+            elif len(result) == 3:
+                violations, warnings, remediation_info = result
+                return violations, warnings, remediation_info
+            else:
+                return [], [], {}
         except ImportError:
             # Validator not yet implemented - return no violations
-            return [], {}
-        except TypeError:
+            return [], [], {}
+        except (TypeError, ValueError):
             # Backward compatibility: if validator returns only violations
             try:
-                violations = self._validator.validate(pipeline_output)
-                return violations if isinstance(violations, list) else ([], {})
+                result = self._validator.validate(pipeline_output)
+                if isinstance(result, tuple) and len(result) == 2:
+                    violations, remediation_info = result
+                    return violations, [], remediation_info
+                elif isinstance(result, list):
+                    return result, [], {}
+                else:
+                    return [], [], {}
             except Exception:
-                return [], {}
+                return [], [], {}

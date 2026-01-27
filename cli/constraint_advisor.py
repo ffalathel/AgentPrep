@@ -30,6 +30,7 @@ class ConstraintAdvisor:
         dataframe: pd.DataFrame,
         task_type: str,
         model_family: str,
+        target_column: Optional[str] = None,
     ) -> dict:
         """Suggest constraint values based on dataset characteristics.
 
@@ -37,11 +38,19 @@ class ConstraintAdvisor:
             dataframe: Dataset DataFrame
             task_type: Task type (classification, regression, etc.)
             model_family: Model family (tree, linear, neural, unknown)
+            target_column: Optional target column name (to exclude from feature count)
 
         Returns:
             Dictionary with max_features, max_interactions, max_cardinality, reasoning
         """
         rows, cols = dataframe.shape
+
+        # Calculate current number of feature columns (excluding target)
+        if target_column and target_column in dataframe.columns:
+            current_feature_count = cols - 1
+        else:
+            # Conservative estimate: assume one target column
+            current_feature_count = max(1, cols - 1)
 
         # Analyze categorical columns
         categorical_cols = self._get_categorical_columns(dataframe)
@@ -55,6 +64,10 @@ class ConstraintAdvisor:
 
         # Max features based on model family
         max_features = self._suggest_max_features(rows, cols, model_family, task_type)
+        
+        # Ensure max_features is at least as large as current feature count
+        # (since we can't reduce features during normalization)
+        max_features = max(max_features, current_feature_count)
 
         # Max interactions based on dataset size and max_features
         max_interactions = self._suggest_max_interactions(

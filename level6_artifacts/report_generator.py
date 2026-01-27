@@ -260,6 +260,14 @@ class ReportGenerator:
         else:
             report += "No violations detected.\n"
 
+        # Add warnings section if any warnings exist
+        warnings = getattr(decision, "warnings", [])
+        if warnings:
+            report += f"\n## Warnings (Informational)\n\n"
+            for i, warning in enumerate(warnings, 1):
+                report += f"{i}. ⚠️ {warning}\n"
+            report += "\n*Note: Warnings do not block pipeline execution but should be reviewed.*\n"
+
         report += f"\n## Leakage Detection\n\n"
         if decision.leakage_detected:
             report += "✗ **Leakage detected**\n"

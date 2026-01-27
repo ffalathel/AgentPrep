@@ -298,6 +298,7 @@ class ArtifactStore:
                 "decision": {
                     "approved": snapshot.decision.approved,
                     "violations": snapshot.decision.violations,
+                    "warnings": getattr(snapshot.decision, "warnings", []),
                     "leakage_detected": snapshot.decision.leakage_detected,
                     "reason": snapshot.decision.reason,
                 },

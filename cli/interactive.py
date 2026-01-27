@@ -418,6 +418,7 @@ def collect_intent_interactively() -> dict:
             dataframe=dataframe,
             task_type=task_type,
             model_family=model_family,
+            target_column=target_column,
         )
 
         # Display suggestions

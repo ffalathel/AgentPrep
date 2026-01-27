@@ -226,18 +226,25 @@ class PolicyEngine:
     def _check_no_column_dropping(self, pipeline_output: dict[str, Any]) -> tuple[bool, str]:
         """Check that columns were not dropped.
 
+        Excludes columns dropped for leakage remediation (required for data integrity).
+
         Returns:
             Tuple of (is_violated, violation_message)
         """
         original_column_count = pipeline_output.get("original_column_count")
         feature_dataframe = pipeline_output.get("feature_dataframe")
+        leakage_dropped_columns = pipeline_output.get("leakage_dropped_columns", [])
 
         if original_column_count is None or feature_dataframe is None:
             return False, ""  # Cannot check, assume pass
 
         final_column_count = len(feature_dataframe.columns)
+        leakage_drop_count = len(leakage_dropped_columns)
 
-        if final_column_count < original_column_count:
+        # Calculate net column drop (excluding leakage drops)
+        net_dropped = original_column_count - final_column_count - leakage_drop_count
+
+        if net_dropped > 0:
             return True, f"Columns were dropped ({original_column_count} → {final_column_count})"
 
         return False, ""

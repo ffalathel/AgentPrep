@@ -102,6 +102,8 @@ class PipelineOrchestrator:
         self.artifact_registry: Optional[ArtifactRegistry] = None
         # Cached pipeline output for governance (used for optional remediation)
         self._governance_pipeline_output: Optional[dict[str, object]] = None
+        # Track columns dropped for leakage (excluded from no_column_dropping policy)
+        self.leakage_dropped_columns: set[str] = set()
 
         logger.info("PipelineOrchestrator initialized")
         logger.debug(f"Intent: task={intent.task.type}, model={intent.model.family}")
@@ -395,6 +397,7 @@ class PipelineOrchestrator:
                 if self.normalized_dataframe is not None
                 else None
             ),
+            "leakage_dropped_columns": list(self.leakage_dropped_columns),
         }
         # Cache for potential remediation/re-evaluation
         self._governance_pipeline_output = pipeline_output
@@ -408,6 +411,10 @@ class PipelineOrchestrator:
             logger.info("Governance violations:")
             for v in decision.violations:
                 logger.info(f"  - {v}")
+        if decision.warnings:
+            logger.info("Governance warnings (informational):")
+            for w in decision.warnings:
+                logger.warning(f"  - {w}")
 
     def _run_level6_artifacts(self, success: bool, exit_code: int) -> None:
         """Execute Level 6: Artifact Storage & Reporting.
@@ -581,46 +588,73 @@ class PipelineOrchestrator:
             logger.info("Auto-remediation is disabled. Skipping remediation.")
             return False
 
-        features_to_remove = set()
+        leakage_features_to_remove = set()
+        other_features_to_remove = set()
 
-        # 1. Remediate leakage
+        # 1. Remediate leakage (always allowed, even if column dropping is disabled)
         if "leakage" in remediation_info:
             leakage_features = remediation_info["leakage"].get("features_to_remove", [])
             if leakage_features:
-                features_to_remove.update(leakage_features)
-                logger.info(
-                    "Remediating leakage: removing %d feature(s): %s",
-                    len(leakage_features),
-                    ", ".join(leakage_features[:5])
-                    + ("..." if len(leakage_features) > 5 else ""),
-                )
+                leakage_features_to_remove.update(leakage_features)
+                if not self.intent.preferences.allow_column_dropping:
+                    logger.warning(
+                        "Feature leakage detected: dropping %d feature(s) (%s) to prevent leakage. "
+                        "This is required for data integrity, even though column dropping is disabled.",
+                        len(leakage_features),
+                        ", ".join(leakage_features[:5])
+                        + ("..." if len(leakage_features) > 5 else ""),
+                    )
+                else:
+                    logger.info(
+                        "Remediating leakage: removing %d feature(s): %s",
+                        len(leakage_features),
+                        ", ".join(leakage_features[:5])
+                        + ("..." if len(leakage_features) > 5 else ""),
+                    )
 
-        # 2. Remediate multicollinearity
+        # 2. Remediate multicollinearity (only if column dropping is allowed)
         if "multicollinearity" in remediation_info:
             multicoll_features = remediation_info["multicollinearity"].get(
                 "features_to_remove", []
             )
             if multicoll_features:
-                features_to_remove.update(multicoll_features)
-                logger.info(
-                    "Remediating multicollinearity: removing %d feature(s): %s",
-                    len(multicoll_features),
-                    ", ".join(multicoll_features[:5])
-                    + ("..." if len(multicoll_features) > 5 else ""),
-                )
+                if self.intent.preferences.allow_column_dropping:
+                    other_features_to_remove.update(multicoll_features)
+                    logger.info(
+                        "Remediating multicollinearity: removing %d feature(s): %s",
+                        len(multicoll_features),
+                        ", ".join(multicoll_features[:5])
+                        + ("..." if len(multicoll_features) > 5 else ""),
+                    )
+                else:
+                    logger.warning(
+                        "Multicollinearity detected: %d feature(s) should be removed (%s), "
+                        "but column dropping is disabled. Skipping removal.",
+                        len(multicoll_features),
+                        ", ".join(multicoll_features[:5])
+                        + ("..." if len(multicoll_features) > 5 else ""),
+                    )
 
-        # 3. Remediate information loss
+        # 3. Remediate information loss (only if column dropping is allowed)
         if "information_loss" in remediation_info:
             loss_features = remediation_info["information_loss"].get(
                 "features_to_remove", []
             )
             if loss_features:
-                features_to_remove.update(loss_features)
-                logger.info(
-                    "Remediating information loss: removing %d feature(s): %s",
-                    len(loss_features),
-                    ", ".join(loss_features[:5]) + ("..." if len(loss_features) > 5 else ""),
-                )
+                if self.intent.preferences.allow_column_dropping:
+                    other_features_to_remove.update(loss_features)
+                    logger.info(
+                        "Remediating information loss: removing %d feature(s): %s",
+                        len(loss_features),
+                        ", ".join(loss_features[:5]) + ("..." if len(loss_features) > 5 else ""),
+                    )
+                else:
+                    logger.warning(
+                        "Information loss detected: %d feature(s) should be removed (%s), "
+                        "but column dropping is disabled. Skipping removal.",
+                        len(loss_features),
+                        ", ".join(loss_features[:5]) + ("..." if len(loss_features) > 5 else ""),
+                    )
 
         # 4. Remediate class imbalance (requires resampling, handled separately)
         if "class_imbalance" in remediation_info:
@@ -653,8 +687,16 @@ class PipelineOrchestrator:
                 )
 
         # Apply feature removals
-        if features_to_remove:
-            self._remove_features(sorted(features_to_remove))
+        # Leakage features are always removed (required for data integrity)
+        # Other features are only removed if column dropping is allowed
+        all_features_to_remove = leakage_features_to_remove | other_features_to_remove
+        
+        if all_features_to_remove:
+            # Track leakage-dropped columns for policy exclusion
+            if leakage_features_to_remove:
+                self.leakage_dropped_columns.update(leakage_features_to_remove)
+            
+            self._remove_features(sorted(all_features_to_remove))
             return True
 
         return False
