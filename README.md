@@ -33,36 +33,71 @@ AgentPrep follows a multi-level pipeline architecture:
 
 ### Setup
 
-1. Clone the repository:
+## Installation & Usage
+
+AgentPrep supports two installation methods: **Standard Installation** (for users) and **Development Installation** (for contributors).
+
+### Method 1: Standard Installation (Recommended for Users)
+
+Install directly from PyPI. This is the easiest way to use the tool.
+
+**1. Create a project directory (optional but recommended):**
 ```bash
-git clone <repository-url>
+mkdir my_ml_project
+cd my_ml_project
+```
+
+**2. Create and activate a virtual environment:**
+```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+**3. Install AgentPrep:**
+```bash
+pip install agentprep
+```
+
+**4. Run the tool:**
+```bash
+# 1. (Optional) Set API Key for AI features
+export OPENAI_API_KEY="your-key"  # or ANTHROPIC_API_KEY / GEMINI_API_KEY
+
+# 2. Start the interactive wizard
+agentprep run
+```
+
+---
+
+### Method 2: Development Installation (For Contributors)
+
+Use this method if you want to modify the source code or contribute.
+
+**1. Clone the repository:**
+```bash
+git clone https://github.com/yourusername/AgentPrep.git
 cd AgentPrep
 ```
 
-2. Install dependencies:
+**2. Run the automated setup script:**
+This script creates a virtual environment and installs the package in editable mode.
 ```bash
-pip install -r requirements.txt
+chmod +x setup_prod.sh
+./setup_prod.sh
 ```
 
-3. (Optional) Install LLM provider SDKs for AI agent features:
+**3. Activate the environment:**
 ```bash
-# For OpenAI
-pip install openai
-
-# For Anthropic
-pip install anthropic
-
-# For Google Gemini
-pip install google-generativeai
+source venv/bin/activate
 ```
 
-## Quick Start
-
-### Basic Usage
-
-Run the interactive pipeline:
-
+**4. Run the CLI:**
+You can run it using the installed command or directly via python:
 ```bash
+# Option A: Installed command (recommended)
+agentprep run
+
+# Option B: Run via python module
 python -m cli run
 ```
 
@@ -244,7 +279,7 @@ Tests are located in the `tests/` directory. To run tests:
 
 ```bash
 # Install test dependencies
-pip install -r requirements-test.txt
+pip install -e ".[dev]"
 
 # Run all tests
 pytest
@@ -258,9 +293,9 @@ pytest --cov=. --cov-report=html
 We use `black` for formatting and `ruff` for linting:
 
 ```bash
-# Install dev dependencies
+# Install package with development dependencies
 pip install -e ".[dev]"
-
+```
 # Format code
 black .
 
