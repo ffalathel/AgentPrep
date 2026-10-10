@@ -6,7 +6,6 @@ All outputs are machine-readable structured objects.
 """
 
 from dataclasses import dataclass
-from typing import Any
 
 import pandas as pd
 
@@ -53,6 +52,20 @@ class SchemaMetadata:
     total_columns: int
 
 
+_DATE_PREFIX = r"^\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}"
+
+
+def _looks_like_dates(series: pd.Series) -> bool:
+    """Strings like 2024-01-31 or 31/01/2024 (CSV files never load as datetime dtype)."""
+    # ponytail: checks a 200-value sample by regex, misses formats like "Jan 31 2024"
+    if not (series.dtype == "object" or pd.api.types.is_string_dtype(series)):
+        return False
+    sample = series.dropna().astype(str).head(200)
+    if sample.empty or not sample.str.match(_DATE_PREFIX).all():
+        return False
+    return pd.to_datetime(sample, errors="coerce", format="mixed").notna().all()
+
+
 def infer_semantic_type(series: pd.Series) -> str:
     """Infer semantic type for a pandas Series.
 
@@ -76,6 +89,9 @@ def infer_semantic_type(series: pd.Series) -> str:
         # If numeric but has low cardinality relative to size, might be categorical
         # But for now, we'll classify based on dtype
         return SemanticType.NUMERIC
+
+    if _looks_like_dates(series):
+        return SemanticType.DATETIME
 
     # Check for categorical (object type with limited unique values)
     if series.dtype == "object" or series.dtype.name == "object":

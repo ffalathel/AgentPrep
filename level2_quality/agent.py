@@ -23,6 +23,7 @@ from utils import (
     sanitize_json_for_prompt,
     sanitize_string_for_prompt,
 )
+from utils.llm_client import parse_json_object
 
 logger = get_logger(__name__)
 
@@ -95,6 +96,9 @@ class DataQualityAgent:
                     "iqr": col_profile.numeric_stats.iqr,
                 }
 
+            if col_profile.placeholder_candidates:
+                col_info["placeholder_candidates"] = col_profile.placeholder_candidates
+
             column_info.append(col_info)
 
         # Sanitize all user-provided values
@@ -102,7 +106,7 @@ class DataQualityAgent:
         sanitized_task_type = sanitize_string_for_prompt(intent.task.type.value)
         sanitized_model_family = sanitize_string_for_prompt(intent.model.family.value)
         sanitized_outlier_policy = sanitize_string_for_prompt(intent.preferences.outlier_policy.value)
-        
+
         # Sanitize JSON data
         sanitized_column_info_json = sanitize_json_for_prompt(column_info)
 
@@ -110,6 +114,7 @@ class DataQualityAgent:
 
 Dataset Summary:
 - Total rows: {quality_profile.total_rows}
+- Duplicate rows: {quality_profile.duplicate_row_count}
 - Total columns: {quality_profile.total_columns}
 - Task type: {sanitized_task_type}
 - Target column: {sanitized_target_column}
@@ -132,9 +137,16 @@ Analyze the quality metrics and propose data cleaning actions. Return ONLY valid
   "actions": [
     {{
       "column": "column_name",
-      "action": "impute | clip | flag | drop",
+      "action": "impute | clip | flag | drop | replace_with_missing",
       "method": "mean | median | mode | iqr",
+      "value": "only for replace_with_missing: the placeholder value, exactly as listed",
       "justification": "brief reason"
+    }}
+  ],
+  "suspected_leaks": [
+    {{
+      "column": "column_name",
+      "reason": "why its value would not be known at prediction time"
     }}
   ]
 }}
@@ -144,9 +156,16 @@ Rules:
 - Use "clip" for outliers (only if outlier_policy is "clip")
 - Use "flag" for outliers (only if outlier_policy is "flag")
 - Use "drop" only for constant/near-constant columns (if allow_column_dropping is true)
+- Use "replace_with_missing" with "value" when a value in placeholder_candidates stands in for
+  missing data (e.g. 0 for blood pressure or BMI, "?" for occupation). Keep values that mean
+  something real (0 purchases, -1 for "never contacted", "Unknown" as an answer). Then impute
+  as usual if needed
 - Column names must match exactly
 - Never propose actions on the target column
 - Return empty actions array if no actions needed
+- List in "suspected_leaks" any column whose value is likely recorded after, or because of,
+  the target outcome (not available when a prediction would be made). Leave it empty if none.
+  These are reviewed by the user; they are never dropped automatically
 
 Return ONLY the JSON, no other text."""
 
@@ -187,14 +206,7 @@ Return ONLY the JSON, no other text."""
 
             # Parse and validate JSON response
             if isinstance(response, str):
-                text = response.strip()
-                # Handle common LLM pattern of wrapping JSON in ```json ... ``` fences
-                if text.startswith("```"):
-                    first_nl = text.find("\n")
-                    last_ticks = text.rfind("```")
-                    if first_nl != -1 and last_ticks != -1 and last_ticks > first_nl:
-                        text = text[first_nl + 1:last_ticks].strip()
-                actions_data = json.loads(text)
+                actions_data = parse_json_object(response)
             else:
                 actions_data = response
 
@@ -238,21 +250,6 @@ Return ONLY the JSON, no other text."""
 
         # Uses utils.llm_client.LLMClientWrapper.complete()
         try:
-            # Choose a sensible default model based on provider, if available
-            provider = getattr(self.llm_client, "provider", None)
-            if provider == "openai":
-                model_name = "gpt-4"
-            elif provider == "anthropic":
-                model_name = "claude-3-opus-20240229"
-            elif provider == "gemini":
-                model_name = "gemini-2.5-flash-lite"
-            else:
-                model_name = None
-
-            return self.llm_client.complete(
-                prompt,
-                model=model_name,
-                temperature=0.2,
-            )
+            return self.llm_client.complete(prompt, temperature=0.2)
         except Exception as e:
             raise AgentError(f"Failed to call LLM: {e}") from e

@@ -37,7 +37,6 @@ ENV/
 .DS_Store
 
 # Testing
-tests/
 test_output/
 .pytest_cache/
 .coverage

@@ -4,6 +4,7 @@ This module provides functions to initialize LLM clients from environment variab
 Supports multiple providers (OpenAI, Anthropic, Gemini) with graceful fallback.
 """
 
+import json
 import os
 import time
 from typing import Any, Optional
@@ -12,6 +13,26 @@ from .logging import get_logger
 from .rate_limiter import RateLimitError, get_rate_limiter
 
 logger = get_logger(__name__)
+
+# Override with AGENTPREP_MODEL. Only the Anthropic default is exercised by bench/run_bench.py.
+DEFAULT_MODELS = {
+    "openai": "gpt-4o",
+    "anthropic": "claude-sonnet-5-5",
+    "gemini": "gemini-2.5-flash-lite",
+}
+
+
+def resolve_model(provider: str) -> Optional[str]:
+    """Model id for a provider: AGENTPREP_MODEL env var, else the default."""
+    return os.getenv("AGENTPREP_MODEL") or DEFAULT_MODELS.get(provider)
+
+
+def parse_json_object(text: str) -> Any:
+    """First JSON object in an LLM reply, ignoring code fences and any text around it."""
+    start = text.find("{")
+    if start == -1:
+        raise json.JSONDecodeError("No JSON object found", text, 0)
+    return json.JSONDecoder().raw_decode(text, start)[0]
 
 
 class LLMClientWrapper:
@@ -65,11 +86,13 @@ class LLMClientWrapper:
             logger.error(f"Rate limit error: {e}")
             raise RuntimeError(f"LLM rate limit exceeded: {e}") from e
 
+        model = kwargs.get("model") or resolve_model(self.provider)
+
         # Make the actual API call
         try:
             if self.provider == "openai":
                 response = self.client.chat.completions.create(
-                    model=kwargs.get("model", "gpt-4"),
+                    model=model,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=kwargs.get("temperature", 0.7),
                 )
@@ -77,19 +100,19 @@ class LLMClientWrapper:
 
             elif self.provider == "anthropic":
                 response = self.client.messages.create(
-                    model=kwargs.get("model", "claude-3-opus-20240229"),
+                    model=model,
                     max_tokens=kwargs.get("max_tokens", 4096),
                     messages=[{"role": "user", "content": prompt}],
                 )
-                return response.content[0].text
+                # Newer models may emit thinking blocks before the text block
+                return next(b.text for b in response.content if b.type == "text")
 
             elif self.provider == "gemini":
-                import google.generativeai as genai
-
-                model = genai.GenerativeModel(
-                    kwargs.get("model", "gemini-pro")
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config={"temperature": kwargs.get("temperature", 0.7)},
                 )
-                response = model.generate_content(prompt)
                 return response.text
 
             else:
@@ -124,8 +147,6 @@ class LLMClientWrapper:
                 raise RuntimeError(f"LLM API error for provider {self.provider}: {e}") from e
             raise RuntimeError(f"Unexpected error calling LLM API for provider {self.provider}: {e}") from e
 
-
-from typing import Any, Optional
 
 def _init_openai() -> Optional[LLMClientWrapper]:
     openai_key = os.getenv("OPENAI_API_KEY")
@@ -173,14 +194,13 @@ def _init_gemini() -> Optional[LLMClientWrapper]:
         return None
 
     try:
-        import google.generativeai as genai  # type: ignore
+        from google import genai  # type: ignore
         logger.info("Initializing Gemini client from GEMINI_API_KEY")
-        genai.configure(api_key=gemini_key)
-        return LLMClientWrapper(genai, "gemini")
+        return LLMClientWrapper(genai.Client(api_key=gemini_key), "gemini")
     except ImportError:
         logger.warning(
-            "GEMINI_API_KEY found but google-generativeai package not installed. "
-            "Install with: pip install google-generativeai"
+            "GEMINI_API_KEY found but google-genai package not installed. "
+            "Install with: pip install google-genai"
         )
     except Exception as e:
         logger.error(f"Failed to initialize Gemini client: {e}")

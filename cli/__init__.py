@@ -17,11 +17,13 @@ import sys
 from pathlib import Path
 
 from core.orchestrator import PipelineOrchestrator
+from core.recipe import RecipeError, apply_recipe, load_recipe
 from intent.validator import (
     IntentValidationError,
     load_and_validate_intent,
     validate_intent,
 )
+from level1_ingestion.loader import DatasetLoadError, load_dataset
 from utils import (
     EXIT_INVALID_INTENT,
     EXIT_RUNTIME_ERROR,
@@ -44,6 +46,7 @@ __all__ = [
     # Pipeline runners
     "run_pipeline",
     "run_pipeline_with_intent",
+    "apply_pipeline",
     # CLI entrypoints
     "parse_args",
     "main",
@@ -88,7 +91,31 @@ def parse_args() -> argparse.Namespace:
         help="Enable verbose logging",
     )
 
+    apply_parser = subparsers.add_parser(
+        "apply", help="Apply a fitted pipeline (pipeline_<run_id>.json) to new data"
+    )
+    apply_parser.add_argument("--pipeline", required=True, help="Path to pipeline_<run_id>.json")
+    apply_parser.add_argument("--input", required=True, help="New data (CSV or Parquet)")
+    apply_parser.add_argument("--output", required=True, help="Output path (.csv or .parquet)")
+    apply_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+
     return parser.parse_args()
+
+
+def apply_pipeline(pipeline_path: str, input_path: str, output_path: str) -> int:
+    """Transform new data with a pipeline fitted by an earlier run."""
+    try:
+        df = apply_recipe(load_dataset(input_path), load_recipe(pipeline_path))
+        out = Path(output_path)
+        if out.suffix == ".parquet":
+            df.to_parquet(out, index=False)
+        else:
+            df.to_csv(out, index=False)
+    except (RecipeError, DatasetLoadError, OSError, ImportError) as e:
+        print(f"✗ {e}", file=sys.stderr)
+        return EXIT_RUNTIME_ERROR
+    print(f"✓ Wrote {len(df)} rows, {len(df.columns)} columns to {output_path}")
+    return EXIT_SUCCESS
 
 
 def run_pipeline_with_intent(intent, output_path: str | None = None) -> int:
@@ -96,8 +123,9 @@ def run_pipeline_with_intent(intent, output_path: str | None = None) -> int:
     try:
         # Determine LLM provider (if any)
         try:
-            from .interactive import get_selected_llm_provider, prompt_llm_provider
             from utils import get_llm_client
+
+            from .interactive import get_selected_llm_provider, prompt_llm_provider
         except ImportError:
             get_selected_llm_provider = None  # type: ignore[assignment]
             prompt_llm_provider = None  # type: ignore[assignment]
@@ -195,6 +223,8 @@ def main() -> int:
     args = parse_args()
     setup_logging(verbose=getattr(args, "verbose", False))
 
+    if args.command == "apply":
+        return apply_pipeline(args.pipeline, args.input, args.output)
     if args.command != "run":
         return EXIT_RUNTIME_ERROR
 

@@ -5,7 +5,6 @@ is protected and intent constraints are satisfied.
 """
 
 import re
-from typing import Optional
 
 import pandas as pd
 
@@ -127,6 +126,14 @@ def safe_cast_types(df: pd.DataFrame) -> pd.DataFrame:
 
     for col in df_casted.columns:
         original_dtype = df_casted[col].dtype
+
+        # Numbers stored as text because of blank cells (e.g. Telco TotalCharges " ")
+        if df_casted[col].dtype == object:
+            s = df_casted[col]
+            blank = s.isna() | s.astype(str).str.strip().eq("")
+            parsed = pd.to_numeric(s.where(~blank), errors="coerce")
+            if (~blank).any() and parsed[~blank].notna().all():
+                df_casted[col] = parsed
 
         # Try to downcast numeric types if safe
         if pd.api.types.is_integer_dtype(df_casted[col]):

@@ -13,15 +13,18 @@ Safety boundaries:
 from dataclasses import dataclass
 from typing import Any, Optional
 
-import numpy as np
 import pandas as pd
 
+from core.recipe import apply_step, fit_step, placeholder_mask
 from intent.schema import IntentSchema, OutlierPolicy
-from utils import get_logger
 from level1_ingestion.schema_inferencer import SchemaMetadata
-from level2_quality.agent import AgentError
+from utils import get_logger
 
 logger = get_logger(__name__)
+
+# Above this, one fill value replaces most of the column and erases the missingness signal
+# (seen on Titanic: `cabin`, 77% missing, imputed with its mode)
+MAX_IMPUTE_MISSING_RATE = 0.5
 
 
 class ExecutionError(Exception):
@@ -72,6 +75,7 @@ class ActionExecutor:
         self.intent = intent
         self.normalized_target = normalized_target
         self.applied_actions: list[AppliedAction] = []
+        self.steps: list[dict[str, Any]] = []  # fitted, replayable on new data (core.recipe)
 
         logger.info("ActionExecutor initialized")
         logger.debug(f"Target column: {normalized_target}")
@@ -103,7 +107,7 @@ class ActionExecutor:
             return False, f"Cannot modify target column '{column_name}'"
 
         # Validate action type
-        valid_actions = ["impute", "clip", "flag", "drop"]
+        valid_actions = ["impute", "clip", "flag", "drop", "replace_with_missing"]
         if action_type not in valid_actions:
             return False, f"Invalid action type: {action_type}. Must be one of {valid_actions}"
 
@@ -130,12 +134,32 @@ class ActionExecutor:
             if action_type == "flag" and self.intent.preferences.outlier_policy != OutlierPolicy.FLAG:
                 return False, "Flag action only allowed when outlier_policy is 'flag'"
 
+        if action_type == "replace_with_missing":
+            if "value" not in action:
+                return False, "replace_with_missing needs the placeholder 'value'"
+            s, value = self.df[column_name], action["value"]
+            if not placeholder_mask(s, value).any():
+                return False, f"Value {value!r} does not occur in '{column_name}'"
+            numeric = pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s)
+            if numeric and value not in (s.min(), s.max()):
+                return False, (
+                    f"Value {value!r} is inside the range of '{column_name}'; "
+                    "a numeric placeholder must be its lowest or highest value"
+                )
+
         # Validate method for impute action
         if action_type == "impute":
             method = action.get("method", "")
             valid_methods = ["mean", "median", "mode"]
             if method not in valid_methods:
                 return False, f"Invalid imputation method: {method}. Must be one of {valid_methods}"
+
+            missing_rate = self.df[column_name].isna().mean()
+            if missing_rate > MAX_IMPUTE_MISSING_RATE:
+                return False, (
+                    f"Imputing {missing_rate:.0%} missing values would overwrite most of "
+                    f"'{column_name}' with one value; use a missing indicator or drop it"
+                )
 
             # Check if method is appropriate for column type
             col_metadata = self.schema_metadata.columns.get(column_name)
@@ -149,7 +173,7 @@ class ActionExecutor:
                     "categorical",
                     "text",
                 ]:
-                    return False, f"Method 'mode' only valid for categorical/text columns"
+                    return False, "Method 'mode' only valid for categorical/text columns"
 
         return True, None
 
@@ -168,16 +192,9 @@ class ActionExecutor:
         justification = action.get("justification", "")
 
         try:
-            if action_type == "impute":
-                self._apply_impute(column_name, method)
-            elif action_type == "clip":
-                self._apply_clip(column_name)
-            elif action_type == "flag":
-                self._apply_flag(column_name)
-            elif action_type == "drop":
-                self._apply_drop(column_name)
-            else:
-                raise ExecutionError(f"Unknown action type: {action_type}")
+            step = fit_step(action_type, self.df, [column_name], method=method, value=action.get("value"))
+            self.df = apply_step(self.df, step)
+            self.steps.append(step)
 
             return AppliedAction(
                 column=column_name,
@@ -198,87 +215,6 @@ class ActionExecutor:
                 reason=str(e),
             )
 
-    def _apply_impute(self, column_name: str, method: str) -> None:
-        """Apply imputation to a column.
-
-        Args:
-            column_name: Name of column to impute
-            method: Imputation method (mean, median, mode)
-        """
-        series = self.df[column_name]
-        missing_mask = series.isna()
-
-        if method == "mean":
-            fill_value = series.mean()
-        elif method == "median":
-            fill_value = series.median()
-        elif method == "mode":
-            fill_value = series.mode()[0] if len(series.mode()) > 0 else None
-        else:
-            raise ExecutionError(f"Unknown imputation method: {method}")
-
-        if fill_value is not None:
-            self.df.loc[missing_mask, column_name] = fill_value
-            logger.debug(f"Imputed {missing_mask.sum()} missing values in '{column_name}' using {method}")
-
-    def _apply_clip(self, column_name: str) -> None:
-        """Apply outlier clipping to a numeric column.
-
-        Args:
-            column_name: Name of column to clip
-        """
-        series = self.df[column_name]
-        if not pd.api.types.is_numeric_dtype(series):
-            raise ExecutionError(f"Cannot clip non-numeric column: {column_name}")
-
-        q25 = series.quantile(0.25)
-        q75 = series.quantile(0.75)
-        iqr = q75 - q25
-
-        lower_bound = q25 - 1.5 * iqr
-        upper_bound = q75 + 1.5 * iqr
-
-        clipped_count = ((series < lower_bound) | (series > upper_bound)).sum()
-        self.df[column_name] = series.clip(lower=lower_bound, upper=upper_bound)
-
-        logger.debug(f"Clipped {clipped_count} outliers in '{column_name}'")
-
-    def _apply_flag(self, column_name: str) -> None:
-        """Flag outliers by creating a new boolean column.
-
-        Args:
-            column_name: Name of column to flag outliers in
-        """
-        series = self.df[column_name]
-        if not pd.api.types.is_numeric_dtype(series):
-            raise ExecutionError(f"Cannot flag outliers in non-numeric column: {column_name}")
-
-        q25 = series.quantile(0.25)
-        q75 = series.quantile(0.75)
-        iqr = q75 - q25
-
-        lower_bound = q25 - 1.5 * iqr
-        upper_bound = q75 + 1.5 * iqr
-
-        outlier_flag_name = f"{column_name}_outlier"
-        self.df[outlier_flag_name] = (series < lower_bound) | (series > upper_bound)
-
-        flagged_count = self.df[outlier_flag_name].sum()
-        logger.debug(f"Flagged {flagged_count} outliers in '{column_name}' as '{outlier_flag_name}'")
-
-    def _apply_drop(self, column_name: str) -> None:
-        """Drop a column from the DataFrame.
-
-        Args:
-            column_name: Name of column to drop
-        """
-        if column_name not in self.df.columns:
-            raise ExecutionError(f"Column '{column_name}' does not exist")
-
-        dropped_count = len(self.df.columns)
-        self.df = self.df.drop(columns=[column_name])
-        logger.debug(f"Dropped column '{column_name}' ({dropped_count} -> {len(self.df.columns)} columns)")
-
     def execute_actions(self, actions: list[dict[str, Any]]) -> pd.DataFrame:
         """Validate and execute a list of proposed actions.
 
@@ -292,6 +228,8 @@ class ActionExecutor:
             Transformed DataFrame with approved actions applied
         """
         logger.info(f"Validating and executing {len(actions)} proposed actions")
+        # Placeholders become missing first, so imputation and the missing-rate check see them
+        actions = sorted(actions, key=lambda a: not (isinstance(a, dict) and a.get("action") == "replace_with_missing"))
 
         for action in actions:
             is_valid, rejection_reason = self.validate_action(action)

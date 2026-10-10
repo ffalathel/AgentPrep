@@ -15,11 +15,11 @@ from utils import (
     get_logger,
     sanitize_column_name,
     sanitize_json_for_prompt,
-    sanitize_prompt_variable,
     sanitize_string_for_prompt,
 )
+from utils.llm_client import parse_json_object
 
-from .feature_catalog import FeatureCatalog, get_catalog
+from .feature_catalog import get_catalog
 
 logger = get_logger(__name__)
 
@@ -168,7 +168,7 @@ class FeatureEngineeringAgent:
         sanitized_interpretability = sanitize_string_for_prompt(
             str(intent.preferences.interpretability_priority)
         )
-        
+
         # Sanitize JSON data
         sanitized_column_info_json = sanitize_json_for_prompt(column_info)
         sanitized_catalog_summary_json = sanitize_json_for_prompt(catalog_summary)
@@ -222,22 +222,7 @@ Return ONLY valid JSON, no other text."""
             raise FeatureAgentError("No LLM client available")
 
         try:
-            # Choose a sensible default model based on provider, if available
-            provider = getattr(self.llm_client, "provider", None)
-            if provider == "openai":
-                model_name = "gpt-4"
-            elif provider == "anthropic":
-                model_name = "claude-3-opus-20240229"
-            elif provider == "gemini":
-                model_name = "gemini-2.5-flash-lite"
-            else:
-                model_name = None
-
-            return self.llm_client.complete(
-                prompt,
-                model=model_name,
-                temperature=0.2,
-            )
+            return self.llm_client.complete(prompt, temperature=0.2)
         except Exception as e:
             raise FeatureAgentError(f"Failed to call LLM: {e}") from e
 
@@ -254,14 +239,7 @@ Return ONLY valid JSON, no other text."""
             FeatureAgentError: If response is invalid
         """
         try:
-            # Try to parse JSON (strip optional ```json ... ``` fences)
-            text = response.strip()
-            if text.startswith("```"):
-                first_nl = text.find("\n")
-                last_ticks = text.rfind("```")
-                if first_nl != -1 and last_ticks != -1 and last_ticks > first_nl:
-                    text = text[first_nl + 1:last_ticks].strip()
-            data = json.loads(text)
+            data = parse_json_object(response)
         except json.JSONDecodeError as e:
             raise FeatureAgentError(
                 f"LLM returned invalid JSON: {e}"

@@ -10,6 +10,7 @@ from typing import Optional
 
 import pandas as pd
 
+from core.recipe import build_recipe, mark_placeholders_missing, save_recipe
 from intent.schema import IntentSchema
 from level1_ingestion.loader import DatasetLoadError, load_dataset
 from level1_ingestion.normalizer import NormalizationError, normalize_dataset
@@ -21,11 +22,11 @@ from level3_metadata.builder import MetadataBuilder
 from level3_metadata.writer import MetadataWriter
 from level4_feature.agent import FeatureAgentError, FeatureEngineeringAgent
 from level4_feature.generator import FeatureGenerationError, FeatureGenerator
-from level4_feature.validator import FeatureValidator, FeatureValidationError
+from level4_feature.validator import FeatureValidationError, FeatureValidator
 from level5_governance.gatekeeper import GovernanceDecision, GovernanceGatekeeper
 from level6_artifacts.artifact_registry import ArtifactRegistry
-from level6_artifacts.store import ArtifactStore, ArtifactStoreError
 from level6_artifacts.report_generator import ReportGenerationError, ReportGenerator
+from level6_artifacts.store import ArtifactStore, ArtifactStoreError
 from utils import PathValidationError, get_logger, validate_output_path
 from utils.constants import EXIT_POLICY_VIOLATION, EXIT_RUNTIME_ERROR, EXIT_SUCCESS
 from utils.file_helpers import generate_run_id
@@ -104,6 +105,15 @@ class PipelineOrchestrator:
         self._governance_pipeline_output: Optional[dict[str, object]] = None
         # Track columns dropped for leakage (excluded from no_column_dropping policy)
         self.leakage_dropped_columns: set[str] = set()
+        # LLM-nominated semantic leaks (surfaced as governance warnings, never auto-dropped)
+        self.suspected_leaks: list[dict[str, str]] = []
+        # LLM failures, surfaced in the governance report instead of silently becoming "0 proposals"
+        self.llm_warnings: list[str] = []
+        # Fitted steps from Levels 2 and 4, saved as a reusable pipeline (core.recipe)
+        self.quality_steps: list[dict] = []
+        self.feature_steps: list[dict] = []
+        self.recipe: Optional[dict] = None
+        self.recipe_path: Optional[Path] = None
 
         logger.info("PipelineOrchestrator initialized")
         logger.debug(f"Intent: task={intent.task.type}, model={intent.model.family}")
@@ -136,13 +146,8 @@ class PipelineOrchestrator:
             logger.error(f"✗ Dataset loading failed: {e}")
             raise
 
-        # Step 2: Infer schema metadata
-        logger.info("Step 2: Inferring schema metadata...")
-        self.schema_metadata = infer_schema(self.raw_dataframe)
-        logger.info(f"✓ Schema inferred: {self.schema_metadata.total_columns} columns analyzed")
-
-        # Step 3: Normalize dataset
-        logger.info("Step 3: Normalizing dataset...")
+        # Step 2: Normalize dataset
+        logger.info("Step 2: Normalizing dataset...")
         try:
             (
                 self.normalized_dataframe,
@@ -155,7 +160,16 @@ class PipelineOrchestrator:
             logger.error(f"✗ Dataset normalization failed: {e}")
             raise
 
+        # Step 3: Infer schema on normalized names, which every later level uses
+        logger.info("Step 3: Inferring schema metadata...")
+        self.schema_metadata = infer_schema(self.normalized_dataframe)
+        logger.info(f"✓ Schema inferred: {self.schema_metadata.total_columns} columns analyzed")
+
         logger.info("Level 1 completed successfully")
+
+    def pre_cleaning_dataframe(self) -> pd.DataFrame:
+        """Data before cleaning, with placeholders the LLM named read as missing."""
+        return mark_placeholders_missing(self.normalized_dataframe, self.quality_steps or [])
 
     def _run_level2_quality(self) -> None:
         """Execute Level 2: Data Quality Agent.
@@ -192,9 +206,12 @@ class PipelineOrchestrator:
             )
             logger.info(f"✓ LLM proposed {len(proposed_actions.get('actions', []))} actions")
         except AgentError as e:
-            logger.warning(f"LLM agent unavailable or returned invalid output: {e}")
-            logger.info("Continuing without LLM proposals (empty actions)")
+            self._record_llm_failure("Level 2 (data quality)", e)
             proposed_actions = {"actions": []}
+
+        self.suspected_leaks = self._validate_suspected_leaks(
+            proposed_actions.get("suspected_leaks", [])
+        )
 
         # Step 3: Validate and execute actions (deterministic)
         logger.info("Step 3: Validating and executing actions...")
@@ -209,6 +226,7 @@ class PipelineOrchestrator:
                 proposed_actions.get("actions", [])
             )
             self.applied_actions = executor.applied_actions
+            self.quality_steps = executor.steps
             self.proposed_actions = proposed_actions.get("actions", [])
 
             applied_count = sum(1 for a in self.applied_actions if a.status == "applied")
@@ -219,6 +237,27 @@ class PipelineOrchestrator:
             raise
 
         logger.info("Level 2 completed successfully")
+
+    def _record_llm_failure(self, level: str, error: Exception) -> None:
+        """Log an LLM failure loudly and keep it for the governance report."""
+        message = f"LLM agent failed at {level}; continued without its proposals: {error}"
+        logger.error(message)
+        self.llm_warnings.append(message)
+
+    def _validate_suspected_leaks(self, suspects: object) -> list[dict[str, str]]:
+        """Keep only well-formed nominations of existing, non-target columns."""
+        if not isinstance(suspects, list):
+            return []
+        valid = []
+        for s in suspects:
+            if not isinstance(s, dict) or not isinstance(s.get("column"), str):
+                continue
+            if s["column"] == self.normalized_target_column:
+                continue
+            if s["column"] not in self.normalized_dataframe.columns:
+                continue
+            valid.append({"column": s["column"], "reason": str(s.get("reason", ""))[:200]})
+        return valid
 
     def _run_level3_metadata(self) -> None:
         """Execute Level 3: Metadata & Profiling Persistence.
@@ -315,8 +354,7 @@ class PipelineOrchestrator:
                 f"✓ LLM proposed {len(proposed_features.get('features', []))} features"
             )
         except FeatureAgentError as e:
-            logger.warning(f"LLM agent unavailable or returned invalid output: {e}")
-            logger.info("Continuing without LLM proposals (empty features)")
+            self._record_llm_failure("Level 4 (feature engineering)", e)
             proposed_features = {"features": []}
 
         # Step 2: Validate proposals (critical safety layer)
@@ -350,10 +388,11 @@ class PipelineOrchestrator:
 
         # Step 3: Generate features deterministically
         logger.info("Step 3: Generating features...")
-        generator = FeatureGenerator(self.cleaned_dataframe)
+        generator = FeatureGenerator(self.cleaned_dataframe, raw=self.pre_cleaning_dataframe())
         try:
             self.feature_dataframe = generator.generate_features(validated)
             self.feature_provenance = generator.provenance
+            self.feature_steps = generator.steps
 
             logger.info(
                 f"✓ Feature generation complete: {len(self.feature_dataframe.columns)} total columns "
@@ -388,6 +427,7 @@ class PipelineOrchestrator:
 
         pipeline_output = {
             "feature_dataframe": self.feature_dataframe,
+            "source_dataframe": self.pre_cleaning_dataframe(),
             "target_column": self.normalized_target_column,
             "feature_provenance": self.feature_provenance or [],
             "schema_metadata": self.schema_metadata,
@@ -398,12 +438,14 @@ class PipelineOrchestrator:
                 else None
             ),
             "leakage_dropped_columns": list(self.leakage_dropped_columns),
+            "suspected_leaks": self.suspected_leaks,
         }
         # Cache for potential remediation/re-evaluation
         self._governance_pipeline_output = pipeline_output
 
         gatekeeper = GovernanceGatekeeper(self.intent)
         decision = gatekeeper.decide(pipeline_output)
+        decision.warnings.extend(self.llm_warnings)
         self.governance_decision = decision
 
         logger.info(str(decision))
@@ -450,6 +492,24 @@ class PipelineOrchestrator:
             if dataset_df is not None:
                 dataset_artifact = store.save_dataset(dataset_df)
                 registry.register_dataset(dataset_artifact)
+                try:
+                    store.save_dataset(dataset_df, format="parquet")
+                except ArtifactStoreError as e:
+                    logger.warning(f"Parquet export skipped: {e}")
+
+                self.recipe = build_recipe(
+                    column_names=self.column_name_mapping,
+                    target=self.normalized_target_column,
+                    input_columns=list(self.normalized_dataframe.columns),
+                    steps=self.quality_steps + self.feature_steps,
+                    output_columns=list(dataset_df.columns),
+                )
+                self.recipe_path = store.artifacts_dir / f"pipeline_{self.run_id}.json"
+                save_recipe(self.recipe, self.recipe_path)
+                logger.info(
+                    f"Fitted pipeline saved: {self.recipe_path} "
+                    f"(reuse on new data: agentprep apply --pipeline {self.recipe_path} --input NEW --output OUT)"
+                )
 
             # Schema metadata artifact
             if self.schema_metadata is not None:
@@ -500,50 +560,6 @@ class PipelineOrchestrator:
         except Exception as e:
             logger.error(f"✗ Unexpected error in Level 6: {e}")
             logger.warning("Pipeline will continue despite artifact/report failures")
-
-    def _find_leaking_features(self) -> list[str]:
-        """Identify features that likely cause leakage.
-
-        Uses simple deterministic rules aligned with the leakage detector:
-        - Target column used as input to a feature
-        - Feature names containing suspicious target-like patterns
-        """
-        if not self.feature_provenance or not self.normalized_target_column:
-            return []
-
-        leaking: set[str] = set()
-        target = self.normalized_target_column
-
-        # 1) Target used as input (direct leakage)
-        for prov in self.feature_provenance:
-            source_cols = getattr(prov, "source_columns", [])
-            feature_name = getattr(prov, "feature_name", None)
-            if feature_name is None:
-                continue
-            if target in source_cols:
-                leaking.add(feature_name)
-
-        # 2) Suspicious feature names (proxy leakage)
-        suspicious_patterns = [
-            target.lower(),
-            "target",
-            "label",
-            "y_",
-            "_target",
-            "_label",
-            f"{target}_",
-            f"_{target}",
-        ]
-
-        for prov in self.feature_provenance:
-            feature_name = getattr(prov, "feature_name", None)
-            if not feature_name:
-                continue
-            col_lower = feature_name.lower()
-            if any(pattern in col_lower for pattern in suspicious_patterns):
-                leaking.add(feature_name)
-
-        return sorted(leaking)
 
     def _remove_features(self, feature_names: list[str]) -> None:
         """Remove specified features from dataframe and provenance."""
@@ -656,46 +672,24 @@ class PipelineOrchestrator:
                         ", ".join(loss_features[:5]) + ("..." if len(loss_features) > 5 else ""),
                     )
 
-        # 4. Remediate class imbalance (requires resampling, handled separately)
+        # 4. Class imbalance: warn only. Resampling before the train/test split would
+        # leak duplicated rows into evaluation, so it belongs inside model training.
         if "class_imbalance" in remediation_info:
-            try:
-                from level5_policy.remediation import DataQualityRemediator
-
-                remediator = DataQualityRemediator(self.intent)
-                pipeline_output = {
-                    "feature_dataframe": self.feature_dataframe,
-                    "target_column": self.normalized_target_column,
-                    "feature_provenance": self.feature_provenance or [],
-                }
-                imbalance_result = remediator.remediate_class_imbalance(pipeline_output)
-
-                if imbalance_result.success and imbalance_result.features_modified:
-                    # Resampling was applied - update dataframe
-                    logger.info(f"Remediating class imbalance: {imbalance_result.reason}")
-                    # Note: The remediator would need to return the resampled dataframe
-                    # For now, we log the warning
-                    if imbalance_result.warnings:
-                        for warning in imbalance_result.warnings:
-                            logger.warning(f"  - {warning}")
-                elif imbalance_result.warnings:
-                    for warning in imbalance_result.warnings:
-                        logger.warning(f"  - {warning}")
-            except ImportError:
-                logger.warning(
-                    "Class imbalance detected but imbalanced-learn not available. "
-                    "Install with: pip install imbalanced-learn"
-                )
+            logger.warning(
+                "Class imbalance detected; not resampled. Use class weights or resample "
+                "inside your training folds."
+            )
 
         # Apply feature removals
         # Leakage features are always removed (required for data integrity)
         # Other features are only removed if column dropping is allowed
         all_features_to_remove = leakage_features_to_remove | other_features_to_remove
-        
+
         if all_features_to_remove:
             # Track leakage-dropped columns for policy exclusion
             if leakage_features_to_remove:
                 self.leakage_dropped_columns.update(leakage_features_to_remove)
-            
+
             self._remove_features(sorted(all_features_to_remove))
             return True
 
@@ -784,10 +778,10 @@ class PipelineOrchestrator:
             return 1  # Level 1 errors return 1 (maintained for backward compatibility)
         except (AgentError, ExecutionError) as e:
             logger.error(f"Pipeline failed at Level 2 (quality): {e}")
-            return 1  # Level 2 errors return 1
+            return EXIT_RUNTIME_ERROR
         except (FeatureAgentError, FeatureValidationError, FeatureGenerationError) as e:
             logger.error(f"Pipeline failed at Level 4 (feature engineering): {e}")
-            return 1  # Level 4 errors return 1
+            return EXIT_RUNTIME_ERROR
         except (OSError, IOError) as e:
             logger.error(f"Pipeline failed due to I/O error: {e}")
             return EXIT_RUNTIME_ERROR

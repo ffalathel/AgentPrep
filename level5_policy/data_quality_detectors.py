@@ -145,11 +145,14 @@ class DistributionShiftDetector:
             current_data = feature_dataframe.iloc[:split_idx][numeric_cols]
             reference_data = feature_dataframe.iloc[split_idx:][numeric_cols]
         else:
-            # For non-time-series, use random split (80/20)
-            np.random.seed(42)  # For reproducibility
-            mask = np.random.rand(len(feature_dataframe)) < 0.8
-            current_data = feature_dataframe[mask][numeric_cols]
-            reference_data = feature_dataframe[~mask][numeric_cols]
+            # A random split of i.i.d. rows has no shift by construction; without time
+            # order or a reference dataset there is nothing to compare.
+            return DistributionShiftResult(
+                shift_detected=False,
+                shifted_features=[],
+                shift_scores={},
+                reason="Distribution shift needs time order or a reference dataset",
+            )
 
         # Perform Kolmogorov-Smirnov test for each numeric feature
         for col in numeric_cols:
@@ -162,8 +165,10 @@ class DistributionShiftDetector:
 
                 # KS test (if scipy available)
                 if SCIPY_AVAILABLE:
-                    ks_statistic, _ = stats.ks_2samp(current_vals, ref_vals)
+                    ks_statistic, p_value = stats.ks_2samp(current_vals, ref_vals)
                     shift_scores[col] = ks_statistic
+                    if p_value >= 0.01:  # effect size alone is noise at small n
+                        continue
                 else:
                     # Fallback: use simple mean/std comparison
                     mean_diff = abs(current_vals.mean() - ref_vals.mean())

@@ -17,7 +17,6 @@ from typing import Any, Optional
 
 from intent.schema import IntentSchema
 from level1_ingestion.schema_inferencer import SchemaMetadata
-from level2_quality.executor import AppliedAction
 from level2_quality.profiler import DatasetQualityProfile
 
 
@@ -178,5 +177,6 @@ def serialize_quality_profile(profile: DatasetQualityProfile) -> dict[str, Any]:
     return {
         "total_rows": profile.total_rows,
         "total_columns": profile.total_columns,
+        "duplicate_row_count": profile.duplicate_row_count,
         "columns": columns_dict,
     }

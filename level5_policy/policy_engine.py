@@ -9,7 +9,7 @@ Policies are facts, not opinions.
 from dataclasses import dataclass
 from typing import Any
 
-from intent.schema import IntentSchema, InterpretabilityPriority, ModelFamily
+from intent.schema import IntentSchema, InterpretabilityPriority
 
 
 @dataclass
@@ -96,17 +96,7 @@ class PolicyEngine:
                 )
             )
 
-        # Rule 6: Model family constraints
-        self.rules.append(
-            PolicyRule(
-                name="model_family_compatibility",
-                description=f"Features must be compatible with {self.intent.model.family} model family",
-                check=self._check_model_family,
-                severity="warning",  # Warning, not critical
-            )
-        )
-
-        # Rule 7: Column dropping (if not allowed)
+        # Rule 6: Column dropping (if not allowed)
         if not self.intent.preferences.allow_column_dropping:
             self.rules.append(
                 PolicyRule(
@@ -211,16 +201,6 @@ class PolicyEngine:
         if non_interpretable:
             return True, f"Features with reduced interpretability: {', '.join(non_interpretable)}"
 
-        return False, ""
-
-    def _check_model_family(self, pipeline_output: dict[str, Any]) -> tuple[bool, str]:
-        """Check model family compatibility.
-
-        Returns:
-            Tuple of (is_violated, violation_message)
-        """
-        # Model family compatibility is a warning, not a hard constraint
-        # For now, we always pass (can be extended with specific rules)
         return False, ""
 
     def _check_no_column_dropping(self, pipeline_output: dict[str, Any]) -> tuple[bool, str]:

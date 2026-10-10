@@ -5,10 +5,9 @@ All profiling is deterministic - no LLM involvement.
 Output is machine-readable structured data only.
 """
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
-import numpy as np
 import pandas as pd
 
 from utils import get_logger
@@ -47,6 +46,8 @@ class ColumnQualityProfile:
     is_constant: bool  # True if all values are the same
     is_near_constant: bool  # True if >95% of values are the same
     numeric_stats: Optional[NumericStats] = None
+    # Values that may stand in for "missing"; the LLM decides which really do
+    placeholder_candidates: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -59,6 +60,7 @@ class DatasetQualityProfile:
     columns: dict[str, ColumnQualityProfile]
     total_rows: int
     total_columns: int
+    duplicate_row_count: int = 0
 
 
 def compute_numeric_stats(series: pd.Series) -> NumericStats:
@@ -118,6 +120,36 @@ def compute_numeric_stats(series: pd.Series) -> NumericStats:
     )
 
 
+PLACEHOLDER_TEXT = {"?", "-", "", "unknown", "n/a", "na", "null", "none", "missing"}
+PLACEHOLDER_NUMBERS = {0, -1, -9, -99, -999, 99, 999, 9999, 99999}
+
+
+def placeholder_candidates(series: pd.Series) -> list[dict[str, Any]]:
+    """Possible placeholders: a numeric min/max that is set apart from the rest or a common
+    placeholder number (0, -1, 999), or text like "?".
+
+    Many are real values (0 purchases, -1 = never contacted), so these are only shown to the LLM.
+    """
+    s = series.dropna()
+    if s.empty or pd.api.types.is_bool_dtype(s):
+        return []
+    if pd.api.types.is_numeric_dtype(s):
+        values = sorted(s.unique())
+        if len(values) < 3:
+            return []
+        iqr = s.quantile(0.75) - s.quantile(0.25)
+        found = []
+        for edge, neighbour in ((values[0], values[1]), (values[-1], values[-2])):
+            share = float((s == edge).mean())
+            set_apart = abs(neighbour - edge) >= 0.5 * iqr
+            if share >= 0.003 and (set_apart or edge in PLACEHOLDER_NUMBERS):
+                found.append({"value": edge.item() if hasattr(edge, "item") else edge, "share": round(share, 3)})
+        return found
+    text = s.astype(str).str.strip()
+    shares = text[text.str.lower().isin(PLACEHOLDER_TEXT)].value_counts() / len(s)
+    return [{"value": v, "share": round(float(share), 3)} for v, share in shares.head(5).items()]
+
+
 def profile_column(df: pd.DataFrame, column_name: str) -> ColumnQualityProfile:
     """Profile a single column for quality issues.
 
@@ -158,6 +190,7 @@ def profile_column(df: pd.DataFrame, column_name: str) -> ColumnQualityProfile:
         is_constant=is_constant,
         is_near_constant=is_near_constant,
         numeric_stats=numeric_stats,
+        placeholder_candidates=placeholder_candidates(series),
     )
 
 
@@ -188,6 +221,7 @@ def profile_dataset(df: pd.DataFrame) -> DatasetQualityProfile:
         columns=columns_profile,
         total_rows=len(df),
         total_columns=len(df.columns),
+        duplicate_row_count=int(df.duplicated().sum()),
     )
 
     logger.info(f"Quality profiling complete: {quality_profile.total_columns} columns profiled")

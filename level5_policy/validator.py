@@ -10,26 +10,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from intent.schema import IntentSchema
-
-try:
-    from level5_policy.data_quality_detectors import (
-        ClassImbalanceDetector,
-        DistributionShiftDetector,
-        InformationLossDetector,
-        MulticollinearityDetector,
-        ProtectedAttributeDetector,
-    )
-
-    DATA_QUALITY_DETECTORS_AVAILABLE = True
-except ImportError:
-    DATA_QUALITY_DETECTORS_AVAILABLE = False
-
-try:
-    from level5_policy.remediation import DataQualityRemediator
-
-    REMEDIATION_AVAILABLE = True
-except ImportError:
-    REMEDIATION_AVAILABLE = False
+from level5_policy.data_quality_detectors import (
+    ClassImbalanceDetector,
+    DistributionShiftDetector,
+    InformationLossDetector,
+    MulticollinearityDetector,
+    ProtectedAttributeDetector,
+)
 
 
 @dataclass
@@ -64,29 +51,21 @@ class ConstraintValidator:
         """
         self.intent = intent
 
-        # Initialize data quality detectors if available
-        if DATA_QUALITY_DETECTORS_AVAILABLE:
-            self.distribution_shift_detector = DistributionShiftDetector(
-                intent, threshold=intent.data_quality.distribution_shift_threshold
-            )
-            self.class_imbalance_detector = ClassImbalanceDetector(
-                intent,
-                severe_threshold=intent.data_quality.class_imbalance_severe_threshold,
-                moderate_threshold=intent.data_quality.class_imbalance_moderate_threshold,
-            )
-            self.multicollinearity_detector = MulticollinearityDetector(
-                intent, threshold=intent.data_quality.multicollinearity_threshold
-            )
-            self.protected_attribute_detector = ProtectedAttributeDetector(
-                intent, custom_patterns=intent.data_quality.protected_attribute_patterns
-            )
-            self.information_loss_detector = InformationLossDetector(intent)
-        else:
-            self.distribution_shift_detector = None
-            self.class_imbalance_detector = None
-            self.multicollinearity_detector = None
-            self.protected_attribute_detector = None
-            self.information_loss_detector = None
+        self.distribution_shift_detector = DistributionShiftDetector(
+            intent, threshold=intent.data_quality.distribution_shift_threshold
+        )
+        self.class_imbalance_detector = ClassImbalanceDetector(
+            intent,
+            severe_threshold=intent.data_quality.class_imbalance_severe_threshold,
+            moderate_threshold=intent.data_quality.class_imbalance_moderate_threshold,
+        )
+        self.multicollinearity_detector = MulticollinearityDetector(
+            intent, threshold=intent.data_quality.multicollinearity_threshold
+        )
+        self.protected_attribute_detector = ProtectedAttributeDetector(
+            intent, custom_patterns=intent.data_quality.protected_attribute_patterns
+        )
+        self.information_loss_detector = InformationLossDetector(intent)
 
     def validate(self, pipeline_output: dict[str, Any]) -> tuple[list[str], list[str], dict[str, Any]]:
         """Validate pipeline output against constraints.
@@ -131,11 +110,10 @@ class ConstraintValidator:
             violations.append(metadata_violation)
 
         # Data quality checks (warnings or violations based on config)
-        if DATA_QUALITY_DETECTORS_AVAILABLE:
-            quality_violations, quality_warnings, quality_remediation = self._validate_data_quality(pipeline_output)
-            violations.extend(quality_violations)
-            warnings.extend(quality_warnings)
-            remediation_info.update(quality_remediation)
+        quality_violations, quality_warnings, quality_remediation = self._validate_data_quality(pipeline_output)
+        violations.extend(quality_violations)
+        warnings.extend(quality_warnings)
+        remediation_info.update(quality_remediation)
 
         return violations, warnings, remediation_info
 
@@ -238,8 +216,7 @@ class ConstraintValidator:
                         if len(shift_result.shifted_features) > 5:
                             msg += f" and {len(shift_result.shifted_features) - 5} more"
                         msg += ")"
-                    if not warn_only:
-                        violations.append(msg)
+                    (warnings if warn_only else violations).append(msg)
             except Exception:
                 pass  # Skip if detection fails
 
@@ -251,6 +228,8 @@ class ConstraintValidator:
                     msg = f"Class imbalance: {imbalance_result.reason}"
                     if not warn_only and imbalance_result.severity == "severe":
                         violations.append(msg)
+                    else:
+                        warnings.append(msg)
             except Exception:
                 pass  # Skip if detection fails
 
@@ -268,8 +247,7 @@ class ConstraintValidator:
                         if len(multicoll_result.highly_correlated_pairs) > 3:
                             msg += f" and {len(multicoll_result.highly_correlated_pairs) - 3} more"
                         msg += ")"
-                    if not warn_only:
-                        violations.append(msg)
+                    (warnings if warn_only else violations).append(msg)
                     # Store remediation info: features to remove (second feature in each pair)
                     features_to_remove = {feat2 for _, feat2, _ in multicoll_result.highly_correlated_pairs}
                     remediation_info["multicollinearity"] = {
@@ -301,8 +279,7 @@ class ConstraintValidator:
                         if len(loss_result.affected_features) > 5:
                             msg += f" and {len(loss_result.affected_features) - 5} more"
                         msg += ")"
-                    if not warn_only:
-                        violations.append(msg)
+                    (warnings if warn_only else violations).append(msg)
                     # Store remediation info: features to remove
                     remediation_info["information_loss"] = {
                         "features_to_remove": loss_result.affected_features,
