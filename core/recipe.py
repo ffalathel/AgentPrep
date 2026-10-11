@@ -33,9 +33,24 @@ def _iqr_bounds(s: pd.Series) -> tuple[float, float]:
     return _py(q25 - 1.5 * iqr), _py(q75 + 1.5 * iqr)
 
 
+def _is_numeric(s: pd.Series) -> bool:
+    return pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s)
+
+
+def placeholder_value(s: pd.Series, value: Any) -> Any:
+    """The placeholder as the column's type: LLMs send numbers as text ("0")."""
+    if _is_numeric(s) and isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return value
+    return value
+
+
 def placeholder_mask(s: pd.Series, value: Any) -> pd.Series:
     """Where ``s`` holds ``value`` (text compared without surrounding spaces)."""
-    if pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s):
+    value = placeholder_value(s, value)
+    if _is_numeric(s):
         return s == value if isinstance(value, (int, float)) and not isinstance(value, bool) else pd.Series(False, index=s.index)
     return s.notna() & (s.astype(str).str.strip() == str(value).strip())
 
@@ -55,7 +70,7 @@ def fit_step(
     s = df[columns[0]]
 
     if op == "replace_with_missing":
-        step["value"] = _py(value)
+        step["value"] = _py(placeholder_value(s, value))
     elif op == "impute":
         if method == "mean":
             value = s.mean()

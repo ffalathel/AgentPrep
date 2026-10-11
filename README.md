@@ -268,17 +268,12 @@ export ANTHROPIC_API_KEY=...   # or put it in .env
 python bench/run_bench.py
 ```
 
-Summary of the last full run (claude-sonnet-5-5, 20 runs, all exit 0). This run came **before** the joint-leak check and placeholder handling were added; see "Since the last full run" below.
-- Documented leaks: 4 of 6 removed deterministically in every run (Titanic `boat`, `body`; planted target copy; Hotel `reservation_status`). Two are semantic leaks, surfaced as warnings and kept: Bank `duration` (known only after the call) and Hotel `reservation_status_date` (set at checkout or cancellation). False leak flags: 0. On Hotel Bookings the LLM also warns about 3–4 legitimate columns (e.g. `adr`, `booking_changes`); these are warnings only.
-- Deterministic code rejected 16 of 592 LLM proposals: 3 imputations that would have overwritten mostly-missing columns (Titanic `cabin`, `boat`, `body`) and 13 features referencing columns that don't exist.
+Summary (claude-sonnet-5-5, 20 runs, each in its own process, all exit 0):
+- Documented leaks: 5 of 6 removed in every run. Titanic `boat` and `body` (by the leak detector, or by the LLM's own drop action), the planted target copy, and Hotel `reservation_status` and `reservation_status_date`. The last one is caught by the pair check: its gap to the arrival date predicts cancellation. Bank `duration` (known only after the call) can't be detected from data, alone or in a pair, so it is surfaced as a warning and kept. False leak flags: 0. On Hotel the LLM also warns about 2–3 legitimate columns (e.g. `assigned_room_type`); these are warnings only.
+- Placeholders: the LLM marked Pima's zero readings (`glucose`, `blood_pressure`, `skin_thickness`, `insulin`, `bmi`) and Adult's `"?"` as missing, and left real values alone (Pima `pregnancies = 0`, Adult `capital_gain = 0`, Bank `pdays = -1`). Debatable calls it made: Stroke `smoking_status = "Unknown"`, Titanic `fare = 0`.
+- Deterministic code rejected 27 of 656 LLM proposals: 5 imputations of mostly-missing columns (Titanic `cabin`, `boat`, `body`; Pima `insulin` after its zeros became missing) and 22 features referencing columns that don't exist.
 - Reusable pipeline: replaying it on the training file reproduced the output exactly in all 20 runs.
-- Held-out score vs. the same data with standard sklearn prep (known leaks removed from both): linear models gain on 7 of 10 datasets (Boston R² +0.120, California R² +0.028, Stroke AUC +0.015, others +0.004 to +0.007), are flat on Titanic, and lose on Hotel (−0.003) and Pima (−0.011). Gradient boosting ranges from −0.030 (HR Attrition) to +0.023 (California). Test sets for Titanic (262 rows), Boston (102), Pima (154) and HR (294) are small, so differences there of ±0.02 are within noise.
-
-Since the last full run (joint-leak check and placeholder handling added; spot-checked, not yet re-benchmarked in full):
-- Hotel `reservation_status_date` is now removed deterministically in both runs (tree and linear): its gap to the arrival date predicts cancellation (held-out score 0.99), and the LLM also flagged it. That makes 5 of 6 documented leaks removed; only Bank `duration` remains a warning, since it predicts the target neither alone nor in a pair.
-- The pair check found no other leaking pairs on any of the 10 datasets, and adds about 12 s on Hotel (119k rows) and under 4 s elsewhere.
-- Hotel held-out scores with known leaks removed are unchanged (0.950 tree, 0.895 linear), and the pipeline still replays exactly.
-- Placeholder handling is not yet measured on the benchmark (e.g. Pima's zero readings, Adult's `"?"`).
+- Held-out score vs. the same data with standard sklearn prep (known leaks removed from both): linear models gain on 5 of 10 datasets (Boston R² +0.098, California R² +0.029, Stroke AUC +0.017, Bank and Telco +0.006) and are within −0.011 on the rest. Gradient boosting ranges from −0.023 (Titanic) to +0.022 (Stroke). Test sets for Titanic (262 rows), Boston (102), Pima (154) and HR (294) are small, so differences there of ±0.02 are within noise; LLM proposals also vary between runs: on Boston and HR Attrition, where neither new check changed anything, the linear lift moved from +0.120 to +0.098 and from +0.006 to −0.007 between the last two full runs.
 
 Each run uses up to about 1 GB of memory (Hotel). On a machine with 8 GB, run the benchmark with nothing else heavy open.
 

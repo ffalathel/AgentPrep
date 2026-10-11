@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 import pandas as pd
 
-from core.recipe import apply_step, fit_step, placeholder_mask
+from core.recipe import apply_step, fit_step, placeholder_mask, placeholder_value
 from intent.schema import IntentSchema, OutlierPolicy
 from level1_ingestion.schema_inferencer import SchemaMetadata
 from utils import get_logger
@@ -137,7 +137,8 @@ class ActionExecutor:
         if action_type == "replace_with_missing":
             if "value" not in action:
                 return False, "replace_with_missing needs the placeholder 'value'"
-            s, value = self.df[column_name], action["value"]
+            s = self.df[column_name]
+            value = placeholder_value(s, action["value"])
             if not placeholder_mask(s, value).any():
                 return False, f"Value {value!r} does not occur in '{column_name}'"
             numeric = pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s)

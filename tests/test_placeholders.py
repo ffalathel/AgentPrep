@@ -94,3 +94,11 @@ def test_5_8_common_placeholder_number_listed_even_when_frequent():
     rng = np.random.default_rng(6)
     s = pd.Series(np.where(rng.random(800) < 0.49, 0, rng.lognormal(4.8, 0.6, 800).round()))
     assert {"value": 0.0, "share": round(float((s == 0).mean()), 3)} in placeholder_candidates(s)
+
+
+def test_5_8_numeric_placeholder_given_as_text_is_accepted(run):
+    # Seen live: the LLM sends {"value": "0"} for numeric columns (the prompt shows value in quotes)
+    llm = StubLLM(actions=[{"column": "bmi", "action": "replace_with_missing", "value": "0"}])
+    _, orch = run(placeholder_df(), llm=llm)
+    assert [a.status for a in orch.applied_actions] == ["applied"]
+    assert orch.feature_dataframe["bmi"].isna().sum() == 160

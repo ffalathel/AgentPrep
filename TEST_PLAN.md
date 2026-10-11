@@ -7,19 +7,19 @@ This plan lists what stopped AgentPrep from doing what the README says. Each cla
 - 🔧 **Fixed**: was broken; the fix and its test are noted
 - ❓ **Open**: not verifiable here (see "What's still open")
 
-**Run it:** `pytest` (63 tests, ~6 s, no key) and `python bench/run_bench.py` (needs an LLM key and scikit-learn).
+**Run it:** `pytest` (76 tests, ~10 s, no key) and `python bench/run_bench.py` (needs an LLM key and scikit-learn).
 
 ## Before / after (benchmark, claude-sonnet-5-5)
 
-| Metric | Before (2026-10-10, 5 datasets) | After (10 datasets, 5 of them unseen by calibration) |
+| Metric | Before (2026-10-10, 5 datasets) | After (10 datasets, 5 of them unseen by calibration; 20 runs) |
 |---|---|---|
-| Documented leaks caught deterministically (Titanic `boat`, `body`; Bank `duration`; planted target copy; Hotel `reservation_status`, `reservation_status_date`) | 0 / 4 | **4 / 6** (`duration` and `reservation_status_date` surfaced as LLM-suspected leaks) |
+| Documented leaks caught deterministically (Titanic `boat`, `body`; Bank `duration`; planted target copy; Hotel `reservation_status`, `reservation_status_date`) | 0 / 4 | **5 / 6** (`duration` surfaced as an LLM-suspected leak) |
 | False leak flags (legitimate features deleted) | 8 | **0** |
 | LLM calls failing silently | 7 / 10 | **0 / 40** (failures now reported) |
-| LLM proposals rejected by deterministic code | 0 / 129 | 16 / 592 (mostly-missing imputations, nonexistent columns) |
+| LLM proposals rejected by deterministic code | 0 / 129 | 27 / 656 (mostly-missing imputations, nonexistent columns) |
 | Pipeline reusable on new data | no | yes; exact replay on all 20 benchmark runs |
-| Held-out score vs. standard sklearn prep (leaks removed) | not measured | linear gains on 7 of 10 (−0.011 to +0.120); trees −0.030 to +0.023 |
-| Tests | none (`tests/` was gitignored) | 63, in CI on Python 3.10 and 3.12 |
+| Held-out score vs. standard sklearn prep (leaks removed) | not measured | linear gains on 5 of 10 (−0.011 to +0.098); trees −0.023 to +0.022 |
+| Tests | none (`tests/` was gitignored) | 76, in CI on Python 3.10 and 3.12 |
 
 Benchmark: 10 datasets × (tree, linear) runs, 80/20 split, AgentPrep fitted on train only. Leak outcomes were identical across every run so far. The second five datasets (Hotel Booking Demand, IBM HR Attrition, Pima Diabetes, Stroke Prediction, California Housing) were added after the fixes, to check that they generalize beyond the data they were calibrated on.
 
@@ -39,6 +39,7 @@ Benchmark: 10 datasets × (tree, linear) runs, 80/20 split, AgentPrep fitted on 
 | 1.8 | ✅ | Target as feature input rejected at L4 | Already worked |
 | 1.9 | 🔧 | Imputation doesn't hide a leak | Found by the benchmark: the LLM imputed `boat`/`body`, erasing the signal. The detector now also scans pre-cleaning data and drops features derived from leaking columns |
 | 1.10 | 🔧 | Regression target copy dropped; float16 columns don't crash | float16 crash found on Bank Marketing |
+| 1.11 | 🔧 | Leaks that only appear in a pair of columns | Found on Hotel `reservation_status_date`: it barely predicts the target alone, but its gap to the (year/month/day split) arrival date does. Pairs are scored on combined values, difference and order; dropped when the LLM also suspected one column, otherwise warned. Bench: caught in both Hotel runs, no other pairs on 10 datasets |
 
 Thresholds (`level5_policy/leakage_detector.py`) are calibrated on the 5 benchmark datasets: known leaks score ≥ 0.92, the best legitimate column 0.68.
 
@@ -87,6 +88,7 @@ Thresholds (`level5_policy/leakage_detector.py`) are calibrated on the 5 benchma
 | 5.5 | 🔧 | Numbers stored as text (blank cells) become numeric | Telco `TotalCharges`; the LLM's median imputation was correctly rejected because the column was text |
 | 5.6 | 🔧 | Non-snake_case column names work | Schema was inferred on raw names while cleaning used normalized ones, so proposals on e.g. `MonthlyCharges` could never apply |
 | 5.7 | 🔧 | Date strings detected as datetime | CSV never yields a datetime dtype, so the four date transforms were unreachable |
+| 5.8 | 🔧 | Placeholder values (0, -1, 999, "?") replaced with missing | Found on Pima (0 = not measured). Profiler lists candidates, LLM decides, code checks the value exists and, for numbers, is the column's min or max. Bench: the LLM's numeric values arrived as text ("0") and were all rejected until coerced; now applied on Pima, Adult, Bank, Stroke |
 
 ## 6. Artifacts
 
@@ -123,7 +125,7 @@ Thresholds (`level5_policy/leakage_detector.py`) are calibrated on the 5 benchma
 
 | # | Status | Notes |
 |---|---|---|
-| 9.1 | ✅ | Measured on a held-out split through the saved pipeline. Linear models gain on 7 of 10 datasets (Boston R² +0.120, California +0.028, Stroke +0.015); Pima −0.011, Hotel −0.003. Gradient boosting −0.030 to +0.023. Where a semantic leak is kept as a warning (Bank `duration`, Hotel `reservation_status_date`), the score stays inflated until the user removes it (Hotel tree: 0.988 vs 0.949) |
+| 9.1 | ✅ | Measured on a held-out split through the saved pipeline. Linear models gain on 5 of 10 datasets (Boston R² +0.098, California +0.029, Stroke +0.017), within −0.011 elsewhere. Gradient boosting −0.023 to +0.022. Where a semantic leak is kept as a warning (Bank `duration`), the score stays inflated until the user removes it |
 
 ---
 
@@ -132,6 +134,8 @@ Thresholds (`level5_policy/leakage_detector.py`) are calibrated on the 5 benchma
 1. **Live OpenAI and Gemini calls:** both paths are tested through the real SDKs against a fake server, but no live call has been made. Default model IDs (`gpt-4o`, `gemini-2.5-flash-lite`) are unverified.
 2. **Trees:** features add little for gradient boosting, which already finds interactions and handles missing values. The value is for linear models.
 3. **Benchmark variance:** one split per dataset. Titanic and Boston test sets are small; repeated splits would tighten the numbers.
-4. **Leak thresholds:** calibrated on 5 datasets; constants in `level5_policy/leakage_detector.py`. On the 5 unseen datasets: 0 false flags, and Hotel `reservation_status` was caught. Hotel `reservation_status_date` was not: on its own it isn't a near-perfect predictor, but combined with the arrival date it leaks (AUC 0.949 → 0.988). Catching it needs a pairwise or date-relative check.
+4. **Leak thresholds:** calibrated on 5 datasets; constants in `level5_policy/leakage_detector.py`. On the 5 unseen datasets: 0 false flags. Only pairs of columns are checked, not groups of three or more.
 5. **Temporal leakage:** safe only because no transform reads other rows (test 1.7). Time-series data isn't split by time.
-6. **Zeros as missing:** Pima's `glucose`, `blood_pressure`, `skin_thickness`, `insulin` and `bmi` use 0 for missing. Neither the profiler nor the LLM treats them as missing, which likely explains Pima's −0.011 / −0.014.
+6. **Placeholder judgement:** the LLM decides which placeholders mean missing. Debatable calls on the bench: Stroke `smoking_status = "Unknown"`, Titanic `fare = 0`.
+7. **Dirty date columns:** Level 1 reads a date column with some junk values as text, so no date features are built from it.
+8. **Benchmark run-to-run variance:** LLM proposals differ between runs. On Boston and HR Attrition, untouched by the new checks, the linear lift moved +0.120 → +0.098 and +0.006 → −0.007 between two full runs.
